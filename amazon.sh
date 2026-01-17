@@ -10,7 +10,7 @@ export NC='\033[0m'
 main_menu() {
     clear
     echo -e "${YELLOW}=========================================="
-    echo -e "      晓琳技术 VPS 网络优化管理面板      "
+    echo -e "      晓林技术 VPS 网络优化管理面板      "
     echo -e "==========================================${NC}"
     echo -e "1. ${GREEN}一键全自动部署 (BBR + Socks5)${NC}"
     echo -e "2. 修改 Socks5 端口/账号/密码"
