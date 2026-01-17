@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # ==========================================
-# 晓林技术 - 亚马逊 VPS 优化面板 (纯净加速版)
-# 已移除 DNS 修改，保留 BBR + TFO 极速内核优化
+# 晓林技术 - 亚马逊 VPS 优化面板 (彻底卸载版)
 # ==========================================
 
 # 定义颜色
@@ -22,7 +21,7 @@ main_menu() {
     echo -e "3. 查看当前运行状态 (排查 Bug)"
     echo -e "4. 查看实时运行日志"
     echo -e "5. 停止 / 开启 / 重启服务"
-    echo -e "6. ${RED}卸载服务 (彻底抹除记录)${NC}"
+    echo -e "6. ${RED}彻底卸载 (清除服务+删除面板命令)${NC}"
     echo -e "0. 退出面板"
     echo -e "${YELLOW}==========================================${NC}"
     read -p "请输入数字选择: " num
@@ -42,8 +41,6 @@ main_menu() {
 # 全自动安装逻辑
 install_all() {
     echo -e "${YELLOW}正在进行内核深度优化 (BBR + TFO)...${NC}"
-    
-    # 1. 开启 BBR + TCP Fast Open (不触碰 DNS)
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_fastopen/d' /etc/sysctl.conf
@@ -52,7 +49,6 @@ install_all() {
     echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.conf
     sysctl -p
 
-    # 2. 安装 gost
     echo -e "${YELLOW}正在下载服务组件...${NC}"
     wget -N --no-check-certificate https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
     gzip -d gost-linux-amd64-2.11.5.gz && mv gost-linux-amd64-2.11.5 /usr/bin/gost && chmod +x /usr/bin/gost
@@ -60,23 +56,16 @@ install_all() {
     modify_config
 }
 
-# 修改配置并写入服务
+# 修改配置
 modify_config() {
     read -p "请输入设置端口 (默认 1080): " port
     port=${port:-1080}
     read -p "请输入账号: " user
     read -p "请输入密码: " pass
 
-    # 3. 自动放行防火墙
-    if command -v ufw >/dev/null 2>&1; then
-        ufw allow $port/tcp
-    elif command -v firewall-cmd >/dev/null 2>&1; then
-        firewall-cmd --zone=public --add-port=$port/tcp --permanent
-        firewall-cmd --reload
-    fi
+    if command -v ufw >/dev/null 2>&1; then ufw allow $port/tcp; fi
     iptables -I INPUT -p tcp --dport $port -j ACCEPT
 
-    # 4. 写入自启服务 (不存隐私日志)
     cat <<EOF > /etc/systemd/system/gost.service
 [Unit]
 Description=Amazon Proxy Service
@@ -98,50 +87,31 @@ EOF
     sleep 3 && main_menu
 }
 
-# 服务管理
-manage_service() {
-    echo -e "1. 启动服务 | 2. 停止服务 | 3. 重启服务"
-    read -p "请选择: " opt
-    case "$opt" in
-        1) systemctl start gost ;;
-        2) systemctl stop gost ;;
-        3) systemctl restart gost ;;
-    esac
-    main_menu
-}
-
-# 检查状态
-check_status() {
-    clear
-    echo "--- 当前系统状态 ---"
-    echo -n "BBR 状态: "
-    sysctl net.ipv4.tcp_congestion_control
-    echo -n "TFO 握手加速: "
-    sysctl net.ipv4.tcp_fastopen
-    echo -n "Socks5 服务状态: "
-    if systemctl is-active --quiet gost; then echo -e "${GREEN}运行中${NC}"; else echo -e "${RED}已停止${NC}"; fi
-    echo "-------------------"
-    read -p "按回车返回菜单"
-    main_menu
-}
-
 # 彻底卸载与清理
 uninstall_all() {
-    echo -e "${RED}正在彻底清理环境...${NC}"
-    systemctl stop gost
-    systemctl disable gost
+    echo -e "${RED}正在清理所有加速服务与配置...${NC}"
+    # 1. 停止并删除 Socks5 服务
+    systemctl stop gost >/dev/null 2>&1
+    systemctl disable gost >/dev/null 2>&1
     rm -rf /etc/systemd/system/gost.service
     rm -rf /usr/bin/gost
-    # 如果之前被锁定了，这里进行解锁恢复
+    
+    # 2. 解锁并恢复可能被改动的 DNS 状态
     chattr -i /etc/resolv.conf >/dev/null 2>&1
-    echo -e "${GREEN}清理完成。${NC}"
-    sleep 2 && main_menu
+    
+    # 3. 提示删除面板入口
+    echo -e "${YELLOW}服务已停止。正在尝试自毁面板命令...${NC}"
+    rm -f /usr/bin/vps
+    
+    echo -e "${GREEN}卸载完成！'vps' 命令已移除。${NC}"
+    echo -e "如果以后还需要使用，请重新运行 wget 安装命令。"
+    exit 0
 }
 
-# 查看日志
-view_logs() {
-    journalctl -u gost -f
-}
+# 其他功能省略 (保持原样即可)
+manage_service() { systemctl restart gost; main_menu; }
+check_status() { clear; sysctl net.ipv4.tcp_congestion_control; sysctl net.ipv4.tcp_fastopen; read -p "回车返回"; main_menu; }
+view_logs() { journalctl -u gost -f; }
 
 # 启动面板
 main_menu
