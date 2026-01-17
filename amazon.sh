@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # ==========================================
-# 晓林技术 - 亚马逊 VPS 终极优化面板
-# 集成: BBR+TFO+Socks5+DNS缓存优化
+# 晓林技术 - 亚马逊 VPS 终极优化面板 (修复版)
 # ==========================================
 
 # 定义颜色
@@ -22,7 +21,7 @@ main_menu() {
     echo -e "3. 查看当前运行状态 (排查 Bug)"
     echo -e "4. 查看实时运行日志"
     echo -e "5. 停止 / 开启 / 重启服务"
-    echo -e "6. 卸载服务 (彻底抹除记录)"
+    echo -e "6. ${RED}卸载服务 (彻底抹除记录)${NC}"
     echo -e "0. 退出面板"
     echo -e "${YELLOW}==========================================${NC}"
     read -p "请输入数字选择: " num
@@ -41,10 +40,9 @@ main_menu() {
 
 # 全自动安装逻辑
 install_all() {
-    echo -e "${YELLOW}正在进行深度内核优化...${NC}"
+    echo -e "${YELLOW}正在进行深度内核与DNS优化...${NC}"
     
-    # 1. 开启 BBR + TCP Fast Open (TFO)
-    # TFO 可以让第二次连接时减少握手次数，图片加载更快
+    # 1. 开启 BBR + TCP Fast Open
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_fastopen/d' /etc/sysctl.conf
@@ -53,27 +51,29 @@ install_all() {
     echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.conf
     sysctl -p
 
-    # 2. 优化文件句柄限制 (防止连接过多导致卡顿)
-    echo "* soft nofile 51200" >> /etc/security/limits.conf
-    echo "* hard nofile 51200" >> /etc/security/limits.conf
+    # 2. DNS 优化 (手动锁定模式，比插件更安全)
+    # 直接设置 Google DNS 提升海外解析速度
+    chattr -i /etc/resolv.conf >/dev/null 2>&1
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+    chattr +i /etc/resolv.conf >/dev/null 2>&1
 
     # 3. 安装 gost
-    echo -e "${YELLOW}正在安装 Socks5 服务端...${NC}"
+    echo -e "${YELLOW}正在下载服务组件...${NC}"
     wget -N --no-check-certificate https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
     gzip -d gost-linux-amd64-2.11.5.gz && mv gost-linux-amd64-2.11.5 /usr/bin/gost && chmod +x /usr/bin/gost
     
-    modify_config # 进入配置引导
+    modify_config
 }
 
 # 修改配置并写入服务
 modify_config() {
-    echo -e "${YELLOW}--- 配置信息设置 ---${NC}"
-    read -p "请输入你要设置的端口 (默认 1080): " port
+    read -p "请输入设置端口 (默认 1080): " port
     port=${port:-1080}
-    read -p "请输入你的账号: " user
-    read -p "请输入你的密码: " pass
+    read -p "请输入账号: " user
+    read -p "请输入密码: " pass
 
-    # 4. 自动识别并放行防火墙
+    # 4. 自动放行防火墙
     if command -v ufw >/dev/null 2>&1; then
         ufw allow $port/tcp
     elif command -v firewall-cmd >/dev/null 2>&1; then
@@ -82,20 +82,17 @@ modify_config() {
     fi
     iptables -I INPUT -p tcp --dport $port -j ACCEPT
 
-    # 5. 写入 systemd 自启 (增加日志不落盘设置，保护隐私)
+    # 5. 写入自启服务 (关闭详细日志，不存隐私数据)
     cat <<EOF > /etc/systemd/system/gost.service
 [Unit]
 Description=Amazon Proxy Service
 After=network.target
-
 [Service]
 Type=simple
-# 增加 -V 参数可关闭详细日志，保护隐私
 ExecStart=/usr/bin/gost -L=${user}:${pass}@:${port}
 Restart=always
 StandardOutput=null
 StandardError=journal
-
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -103,42 +100,54 @@ EOF
     systemctl daemon-reload
     systemctl enable gost
     systemctl restart gost
-    echo -e "${GREEN}全部优化已完成！${NC}"
-    echo -e "当前配置：端口 ${port} | 账号 ${user}"
+    echo -e "${GREEN}加速部署成功！${NC}"
     sleep 3 && main_menu
+}
+
+# 服务管理
+manage_service() {
+    echo -e "1. 启动服务 | 2. 停止服务 | 3. 重启服务"
+    read -p "请选择: " opt
+    case "$opt" in
+        1) systemctl start gost ;;
+        2) systemctl stop gost ;;
+        3) systemctl restart gost ;;
+    esac
+    main_menu
 }
 
 # 检查状态
 check_status() {
     clear
     echo "--- 当前系统状态 ---"
-    echo -n "BBR 加速状态: "
+    echo -n "BBR 状态: "
     sysctl net.ipv4.tcp_congestion_control
-    echo -n "TCP Fast Open: "
+    echo -n "TFO 状态: "
     sysctl net.ipv4.tcp_fastopen
-    echo -n "Socks5 服务状态: "
+    echo -n "Socks5 状态: "
     if systemctl is-active --quiet gost; then echo -e "${GREEN}运行中${NC}"; else echo -e "${RED}已停止${NC}"; fi
     echo "-------------------"
     read -p "按回车返回菜单"
     main_menu
 }
 
-# 卸载与清理
+# 彻底卸载与清理 (修复了函数缺失问题)
 uninstall_all() {
-    echo -e "${RED}正在彻底卸载并清理配置...${NC}"
+    echo -e "${RED}正在彻底清理环境...${NC}"
     systemctl stop gost
     systemctl disable gost
     rm -rf /etc/systemd/system/gost.service
     rm -rf /usr/bin/gost
-    echo -e "${GREEN}清理完成，所有代理记录已抹除。${NC}"
+    # 解锁 DNS 配置文件
+    chattr -i /etc/resolv.conf >/dev/null 2>&1
+    echo -e "${GREEN}清理完成，所有痕迹已抹除。${NC}"
     sleep 2 && main_menu
 }
 
-# 运行日志
+# 查看日志
 view_logs() {
-    echo "正在查看实时日志 (按 Ctrl+C 退出查看):"
     journalctl -u gost -f
 }
 
-# 启动面板
+# 启动
 main_menu
