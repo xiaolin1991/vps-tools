@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # ==========================================
-# 晓林技术 - 亚马逊 VPS 终极优化面板 (修复版)
+# 晓林技术 - 亚马逊 VPS 优化面板 (纯净加速版)
+# 已移除 DNS 修改，保留 BBR + TFO 极速内核优化
 # ==========================================
 
 # 定义颜色
@@ -40,9 +41,9 @@ main_menu() {
 
 # 全自动安装逻辑
 install_all() {
-    echo -e "${YELLOW}正在进行深度内核与DNS优化...${NC}"
+    echo -e "${YELLOW}正在进行内核深度优化 (BBR + TFO)...${NC}"
     
-    # 1. 开启 BBR + TCP Fast Open
+    # 1. 开启 BBR + TCP Fast Open (不触碰 DNS)
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_fastopen/d' /etc/sysctl.conf
@@ -51,14 +52,7 @@ install_all() {
     echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.conf
     sysctl -p
 
-    # 2. DNS 优化 (手动锁定模式，比插件更安全)
-    # 直接设置 Google DNS 提升海外解析速度
-    chattr -i /etc/resolv.conf >/dev/null 2>&1
-    echo "nameserver 8.8.8.8" > /etc/resolv.conf
-    echo "nameserver 1.1.1.1" >> /etc/resolv.conf
-    chattr +i /etc/resolv.conf >/dev/null 2>&1
-
-    # 3. 安装 gost
+    # 2. 安装 gost
     echo -e "${YELLOW}正在下载服务组件...${NC}"
     wget -N --no-check-certificate https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
     gzip -d gost-linux-amd64-2.11.5.gz && mv gost-linux-amd64-2.11.5 /usr/bin/gost && chmod +x /usr/bin/gost
@@ -73,7 +67,7 @@ modify_config() {
     read -p "请输入账号: " user
     read -p "请输入密码: " pass
 
-    # 4. 自动放行防火墙
+    # 3. 自动放行防火墙
     if command -v ufw >/dev/null 2>&1; then
         ufw allow $port/tcp
     elif command -v firewall-cmd >/dev/null 2>&1; then
@@ -82,7 +76,7 @@ modify_config() {
     fi
     iptables -I INPUT -p tcp --dport $port -j ACCEPT
 
-    # 5. 写入自启服务 (关闭详细日志，不存隐私数据)
+    # 4. 写入自启服务 (不存隐私日志)
     cat <<EOF > /etc/systemd/system/gost.service
 [Unit]
 Description=Amazon Proxy Service
@@ -122,25 +116,25 @@ check_status() {
     echo "--- 当前系统状态 ---"
     echo -n "BBR 状态: "
     sysctl net.ipv4.tcp_congestion_control
-    echo -n "TFO 状态: "
+    echo -n "TFO 握手加速: "
     sysctl net.ipv4.tcp_fastopen
-    echo -n "Socks5 状态: "
+    echo -n "Socks5 服务状态: "
     if systemctl is-active --quiet gost; then echo -e "${GREEN}运行中${NC}"; else echo -e "${RED}已停止${NC}"; fi
     echo "-------------------"
     read -p "按回车返回菜单"
     main_menu
 }
 
-# 彻底卸载与清理 (修复了函数缺失问题)
+# 彻底卸载与清理
 uninstall_all() {
     echo -e "${RED}正在彻底清理环境...${NC}"
     systemctl stop gost
     systemctl disable gost
     rm -rf /etc/systemd/system/gost.service
     rm -rf /usr/bin/gost
-    # 解锁 DNS 配置文件
+    # 如果之前被锁定了，这里进行解锁恢复
     chattr -i /etc/resolv.conf >/dev/null 2>&1
-    echo -e "${GREEN}清理完成，所有痕迹已抹除。${NC}"
+    echo -e "${GREEN}清理完成。${NC}"
     sleep 2 && main_menu
 }
 
@@ -149,5 +143,5 @@ view_logs() {
     journalctl -u gost -f
 }
 
-# 启动
+# 启动面板
 main_menu
