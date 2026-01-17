@@ -7,4 +7,4 @@
 请在你的 VPS 终端（SSH）直接执行以下这行长命令进行安装：
 
 ```bash
-wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/amazon && amazon
+wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
