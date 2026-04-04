@@ -9,7 +9,7 @@
 ```bash
 wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 
-VPS专用一键脚本如下：快捷方式：sb
+##### VPS专用一键脚本如下：快捷方式：sb
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
 或者
