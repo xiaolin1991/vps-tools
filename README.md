@@ -8,5 +8,3 @@
 
 ```bash
 wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
-
-这个脚本专为亚马逊卖家设计，集成了 **BBR 加速**和 **Socks5 轻量代理**，旨在不改变 IP 的前提下提升跨境访问后台的速度。
