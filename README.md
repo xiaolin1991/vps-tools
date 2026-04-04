@@ -15,4 +15,7 @@ wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/mai
 bash <(wget -qO- https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
 ```
 ### 或者
+```
 bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
+```
+### 以上是一条龙自动安装服务
