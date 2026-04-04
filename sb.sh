@@ -2521,15 +2521,13 @@ warpwg
 inssbjsonser
 sbservice
 sbactive
-#curl -sL https://gitlab.com/rwkgyg/sing-box-yg/-/raw/main/version/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
-curl -sL https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 lnsb && blue "Sing-box-yg脚本安装成功，脚本快捷方式：sb" && cronsb
 echo
 wgcfgo
 sbshare
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-blue "可选择9，刷新并显示所有协议配置及分享链接"
+blue "可选择8，刷新并显示所有协议配置及分享链接"
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 echo
 }
@@ -3800,18 +3798,10 @@ rm /tmp/crontab.tmp
 }
 
 lnsb(){
-rm -rf /usr/bin/sb
-curl -L -o /usr/bin/sb -# --retry 2 --insecure https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/sb.sh
-chmod +x /usr/bin/sb
-}
-
-upsbyg(){
-if [[ ! -f '/usr/bin/sb' ]]; then
-red "未正常安装Sing-box-yg" && exit
+if [[ -f "$0" && "$(basename "$0")" != "bash" ]]; then
+    cp "$(readlink -f "$0")" /usr/bin/sb 2>/dev/null
+    chmod +x /usr/bin/sb 2>/dev/null
 fi
-lnsb
-curl -sL https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
-green "Sing-box-yg安装脚本升级成功" && sleep 5 && sb
 }
 
 lapre(){
@@ -3910,7 +3900,7 @@ fi
 
 sbactive(){
 if [[ ! -f /etc/s-box/sb.json ]]; then
-red "未正常启动Sing-box，请卸载重装或者选择10查看运行日志反馈" && exit
+red "未正常启动Sing-box，请卸载重装或者选择9查看运行日志反馈" && exit
 fi
 }
 
@@ -4284,35 +4274,20 @@ green " 3. 变更配置 【双证书TLS/UUID路径/Argo/IP优先/TG通知/Warp/�
 green " 4. 更改主端口/添加多端口跳跃复用" 
 green " 5. 三通道域名分流"
 green " 6. 关闭/重启 Sing-box"   
-green " 7. 更新 Sing-box-yg 脚本"
-green " 8. 更新/切换/指定 Sing-box 内核版本"
+green " 7. 更新/切换/指定 Sing-box 内核版本"
 white "----------------------------------------------------------------------------------"
-green " 9. 刷新并查看节点 【Mihomo/SFA+SFI+SFW三合一配置/订阅链接/推送TG通知】"
-green "10. 查看 Sing-box 运行日志"
-green "11. 一键原版BBR+FQ加速"
-green "12. 管理 Acme 申请域名证书"
-green "13. 管理 Warp 查看Netflix/ChatGPT解锁情况"
-green "14. 添加 WARP-plus-Socks5 代理模式 【本地Warp/多地区Psiphon-VPN】"
-green "15. 刷新本地IP、调整IPV4/IPV6配置输出"
+green " 8. 刷新并查看节点 【Mihomo/SFA+SFI+SFW三合一配置/订阅链接/推送TG通知】"
+green " 9. 查看 Sing-box 运行日志"
+green "10. 一键原版BBR+FQ加速"
+green "11. 管理 Acme 申请域名证书"
+green "12. 管理 Warp 查看Netflix/ChatGPT解锁情况"
+green "13. 添加 WARP-plus-Socks5 代理模式 【本地Warp/多地区Psiphon-VPN】"
+green "14. 刷新本地IP、调整IPV4/IPV6配置输出"
 white "----------------------------------------------------------------------------------"
-green "16. 晓林技术服务脚本使用说明书"
+green "15. 晓林技术服务脚本使用说明书"
 white "----------------------------------------------------------------------------------"
 green " 0. 退出脚本"
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-insV=$(cat /etc/s-box/v 2>/dev/null)
-latestV=$(curl -sL https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/version | awk -F "更新内容" '{print $1}' | head -n 1)
-if [ -f /etc/s-box/v ]; then
-if [ "$insV" = "$latestV" ]; then
-echo -e "当前 Sing-box-yg 脚本最新版：${bblue}${insV}${plain} (已安装)"
-else
-echo -e "当前 Sing-box-yg 脚本版本号：${bblue}${insV}${plain}"
-echo -e "检测到最新 Sing-box-yg 脚本版本号：${yellow}${latestV}${plain} (可选择7进行更新)"
-echo -e "${yellow}$(curl -sL https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/version)${plain}"
-fi
-else
-echo -e "当前 Sing-box-yg 脚本版本号：${bblue}${latestV}${plain}"
-yellow "未安装 Sing-box-yg 脚本！请先选择 1 安装"
-fi
 
 lapre
 if [ -f '/etc/s-box/sb.json' ]; then
@@ -4325,7 +4300,7 @@ echo -e "当前 Sing-box 最新测试版内核：${bblue}${precore}${plain} (可
 else
 echo
 echo -e "当前 Sing-box 已安装正式版内核：${bblue}${inscore}${plain}"
-echo -e "检测到最新 Sing-box 正式版内核：${yellow}${latcore}${plain} (可选择8进行更新)"
+echo -e "检测到最新 Sing-box 正式版内核：${yellow}${latcore}${plain} (可选择7进行更新)"
 echo
 echo -e "当前 Sing-box 最新测试版内核：${bblue}${precore}${plain} (可切换)"
 fi
@@ -4338,7 +4313,7 @@ echo -e "当前 Sing-box 最新正式版内核：${bblue}${latcore}${plain} (可
 else
 echo
 echo -e "当前 Sing-box 已安装测试版内核：${bblue}${inscore}${plain}"
-echo -e "检测到最新 Sing-box 测试版内核：${yellow}${precore}${plain} (可选择8进行更新)"
+echo -e "检测到最新 Sing-box 测试版内核：${yellow}${precore}${plain} (可选择7进行更新)"
 echo
 echo -e "当前 Sing-box 最新正式版内核：${bblue}${latcore}${plain} (可切换)"
 fi
@@ -4398,7 +4373,7 @@ fi
 if [[ -n $($status_cmd 2>/dev/null | grep -w "$status_pattern") && -f '/etc/s-box/sb.json' ]]; then
 echo -e "Sing-box状态：$blue运行中$plain"
 elif [[ -z $($status_cmd 2>/dev/null | grep -w "$status_pattern") && -f '/etc/s-box/sb.json' ]]; then
-echo -e "Sing-box状态：$yellow未启动，选择10查看日志并反馈，建议切换正式版内核或卸载重装脚本$plain"
+echo -e "Sing-box状态：$yellow未启动，选择9查看日志并反馈，建议切换正式版内核或卸载重装脚本$plain"
 else
 echo -e "Sing-box状态：$red未安装$plain"
 fi
@@ -4408,7 +4383,7 @@ showprotocol
 fi
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 echo
-readp "请输入数字【0-16】:" Input
+readp "请输入数字【0-15】:" Input
 case "$Input" in  
  1 ) instsllsingbox;;
  2 ) unins;;
@@ -4416,15 +4391,14 @@ case "$Input" in
  4 ) changeport;;
  5 ) changefl;;
  6 ) stclre;;
- 7 ) upsbyg;; 
- 8 ) upsbcroe;;
- 9 ) clash_sb_share;;
-10 ) sblog;;
-11 ) bbr;;
-12 ) acme;;
-13 ) cfwarp;;
-14 ) inssbwpph;;
-15 ) wgcfgo && sbshare;;
-16 ) sbsm;;
+ 7 ) upsbcroe;;
+ 8 ) clash_sb_share;;
+ 9 ) sblog;;
+10 ) bbr;;
+11 ) acme;;
+12 ) cfwarp;;
+13 ) inssbwpph;;
+14 ) wgcfgo && sbshare;;
+15 ) sbsm;;
  * ) exit 
 esac
