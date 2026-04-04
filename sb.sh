@@ -283,7 +283,7 @@ red "生成bing自签证书失败" && exit
 fi
 echo
 if [[ -f /root/ygkkkca/cert.crt && -f /root/ygkkkca/private.key && -s /root/ygkkkca/cert.crt && -s /root/ygkkkca/private.key ]]; then
-yellow "经检测，之前已使用Acme-yg脚本申请过Acme域名证书：$(cat /root/ygkkkca/ca.log) "
+yellow "经检测，之前已申请过Acme域名证书：$(cat /root/ygkkkca/ca.log) "
 green "是否使用 $(cat /root/ygkkkca/ca.log) 域名证书？"
 yellow "1：否！使用自签的证书 (回车默认)"
 yellow "2：是！使用 $(cat /root/ygkkkca/ca.log) 域名证书"
@@ -296,7 +296,7 @@ fi
 else
 green "如果你有解析完成的域名，是否申请一个Acme域名证书？"
 yellow "1：否！继续使用自签的证书 (回车默认)"
-yellow "2：是！使用Acme-yg脚本申请Acme证书 (支持常规80端口模式与Dns API模式)"
+yellow "2：是！申请Acme证书 (支持常规80端口模式与Dns API模式)"
 readp "请选择【1-2】：" menu
 if [ -z "$menu" ] || [ "$menu" = "1" ] ; then
 zqzs
@@ -3160,7 +3160,7 @@ green "推荐使用稳定的世界大厂或组织的官方CDN域名作为CDN优�
 blue "www.visa.com.sg"
 blue "www.wto.org"
 blue "www.web.com"
-blue "yg1.ygkkk.dpdns.org (yg1中的1，可换为1-11中任意数字，晓林技术服务维护)"
+blue "yg1.ygkkk.dpdns.org (yg1中的1，可换为1-11中任意数字，晓林技术服务推荐)"
 echo
 yellow "1：自定义Vmess-ws(tls)主协议节点的CDN优选地址"
 yellow "2：针对选项1，重置客户端host/sni域名(IP解析到CF上的域名)"
@@ -3894,7 +3894,7 @@ iptables -t nat -F PREROUTING >/dev/null 2>&1
 netfilter-persistent save >/dev/null 2>&1
 service iptables save >/dev/null 2>&1
 green "Sing-box卸载完成！"
-blue "欢迎继续使用Sing-box-yg脚本：bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/sb.sh)"
+blue "欢迎继续使用晓林技术服务管理脚本：bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/sb.sh)"
 echo
 }
 
@@ -3967,7 +3967,7 @@ white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 echo
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 red "🚀SFA/SFI/SFW配置文件显示如下："
-red "安卓SFA、苹果SFI，win电脑官方文件包SFW请到晓林技术服务Github项目自行下载，"
+red "安卓SFA、苹果SFI，win电脑官方文件包SFW请向晓林技术服务获取，"
 red "文件目录 /etc/s-box/sbox.json ，复制自建以json文件格式为准" && sleep 2
 echo
 cat /etc/s-box/sbox.json
@@ -4256,31 +4256,23 @@ fi
 
 sbsm(){
 echo
-green "关注晓林技术服务YouTube频道：https://youtube.com/@xiaolin 了解最新代理协议与翻墙动态"
+green "欢迎关注：晓林技术服务 了解最新技术动态"
 echo
-blue "sing-box-yg脚本视频教程：https://www.youtube.com/playlist?list=PLMgly2AulGG_Affv6skQXWnVqw7XWiPwJ"
-echo
-blue "sing-box-yg脚本博客说明：http://xiaolin.blogspot.com/2023/10/sing-box-yg.html"
-echo
-blue "sing-box-yg脚本项目地址：https://github.com/xiaolin/sing-box-yg"
-echo
-blue "推荐晓林技术服务新品：ArgoSBX一键无交互小钢炮脚本"
-blue "ArgoSBX项目地址：https://github.com/xiaolin/argosbx"
+blue "为您提供专业、稳定、高效的网络解决方案"
 echo
 }
 
 clear
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
-echo -e "${bblue} ░██     ░██      ░██ ██ ██         ░█${plain}█   ░██     ░██   ░██     ░█${red}█   ░██${plain}  "
-echo -e "${bblue}  ░██   ░██      ░██    ░░██${plain}        ░██  ░██      ░██  ░██${red}      ░██  ░██${plain}   "
-echo -e "${bblue}   ░██ ░██      ░██ ${plain}                ░██ ██        ░██ █${red}█        ░██ ██  ${plain}   "
-echo -e "${bblue}     ░██        ░${plain}██    ░██ ██       ░██ ██        ░█${red}█ ██        ░██ ██  ${plain}  "
-echo -e "${bblue}     ░██ ${plain}        ░██    ░░██        ░██ ░██       ░${red}██ ░██       ░██ ░██ ${plain}  "
-echo -e "${bblue}     ░█${plain}█          ░██ ██ ██         ░██  ░░${red}██     ░██  ░░██     ░██  ░░██ ${plain}  "
+echo -e "${bblue} ░██   ░██ ░██  ░█████  ░██████  ${red}░██       ░██ ░███   ░██ ${plain}"
+echo -e "${bblue}  ░██ ░██  ░██ ░██   ░██░██   ░██${red}░██       ░██ ░██░██ ░██ ${plain}"
+echo -e "${bblue}   ░███    ░██ ░███████ ░██   ░██${red}░██       ░██ ░██ ░██░██ ${plain}"
+echo -e "${bblue}  ░██ ░██  ░██ ░██   ░██░██   ░██${red}░██       ░██ ░██  ░████ ${plain}"
+echo -e "${bblue} ░██   ░██ ░██ ░██   ░██░██████  ${red}░████████ ░██ ░██   ░███ ${plain}"
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
-white "晓林技术服务Github项目  ：github.com/xiaolin"
-white "晓林技术服务Blogger博客 ：xiaolin.blogspot.com"
-white "晓林技术服务YouTube频道 ：www.youtube.com/@xiaolin"
+white "服务提供 ：晓林技术服务"
+white "业务范围 ：专业/稳定/高效的技术支持"
+white "技术交流 ：欢迎联系晓林获取最新资讯"
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
 white "Vless-reality-vision、Vmess-ws(tls)+Argo、Hy2、Tuic、Anytls 五协议共存脚本"
 white "脚本快捷方式：sb"
@@ -4303,7 +4295,7 @@ green "13. 管理 Warp 查看Netflix/ChatGPT解锁情况"
 green "14. 添加 WARP-plus-Socks5 代理模式 【本地Warp/多地区Psiphon-VPN】"
 green "15. 刷新本地IP、调整IPV4/IPV6配置输出"
 white "----------------------------------------------------------------------------------"
-green "16. Sing-box-yg脚本使用说明书"
+green "16. 晓林技术服务脚本使用说明书"
 white "----------------------------------------------------------------------------------"
 green " 0. 退出脚本"
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
