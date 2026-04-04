@@ -13,6 +13,16 @@ blue(){ echo -e "\033[36m\033[01m$1\033[0m";}
 white(){ echo -e "\033[37m\033[01m$1\033[0m";}
 readp(){ read -p "$(yellow "$1")" $2;}
 [[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit
+
+# 自动将当前脚本复制为系统快捷命令 sb，避免手动修改后调用失败
+if [[ -f "${BASH_SOURCE[0]}" && "$(readlink -f "${BASH_SOURCE[0]}")" != "/usr/bin/sb" ]]; then
+    cp -f "${BASH_SOURCE[0]}" /usr/bin/sb 2>/dev/null
+    chmod +x /usr/bin/sb 2>/dev/null
+elif [[ -f "$0" && "$(readlink -f "$0")" != "/usr/bin/sb" ]]; then
+    cp -f "$0" /usr/bin/sb 2>/dev/null
+    chmod +x /usr/bin/sb 2>/dev/null
+fi
+
 #[[ -e /etc/hosts ]] && grep -qE '^ *172.65.251.78 gitlab.com' /etc/hosts || echo -e '\n172.65.251.78 gitlab.com' >> /etc/hosts
 if [[ -f /etc/redhat-release ]]; then
 release="Centos"
@@ -3798,8 +3808,16 @@ rm /tmp/crontab.tmp
 }
 
 lnsb(){
-if [[ -f "$0" && "$(basename "$0")" != "bash" ]]; then
-    cp "$(readlink -f "$0")" /usr/bin/sb 2>/dev/null
+local spath
+if [[ -f "${BASH_SOURCE[0]}" ]]; then
+    spath="${BASH_SOURCE[0]}"
+elif [[ -f "$0" ]]; then
+    spath="$0"
+elif [[ -f "./sb.sh" ]]; then
+    spath="./sb.sh"
+fi
+if [[ -n "$spath" && -f "$spath" && "$(readlink -f "$spath")" != "/usr/bin/sb" ]]; then
+    cp -f "$spath" /usr/bin/sb 2>/dev/null
     chmod +x /usr/bin/sb 2>/dev/null
 fi
 }
