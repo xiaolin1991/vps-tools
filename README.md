@@ -6,16 +6,23 @@
 
 请在你的 VPS 终端（SSH）直接执行以下这行长命令进行安装：
 
-```bash
-wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
-
 ```
+wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
+```
+### 或者
+```
+wget -O /usr/bin/vps https://ghproxy.net/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
+```
+
 ### VPS专用一键脚本如下：快捷方式：```sb```
 ```
 bash <(wget -qO- https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
 ```
+
 ### 或者
+
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
 ```
+
 ### 以上是一条龙自动安装服务
