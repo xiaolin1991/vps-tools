@@ -14,13 +14,15 @@ wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/mai
 wget -O /usr/bin/vps https://ghproxy.net/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 ```
 
-```
 ### VPS专用一键脚本如下：快捷方式：```sb```
 ```
 bash <(wget -qO- https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
 ```
+
 ### 或者
+
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
 ```
+
 ### 以上是一条龙自动安装服务
