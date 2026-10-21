@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # ================================================================
-# 晓林技术 - 亚马逊电商 VPS 网络极限加速与防关联管理面板 (旗舰专业版)
+# 晓林技术 - 亚马逊电商 VPS 网络极限加速与防关联管理面板 (旗舰专业版 v3.0)
 # 针对场景: 亚马逊店铺管理 / 广告投放 / 指纹浏览器 (Socks5 & HTTP)
+# 特别优化: 解决 10秒 DNS 超时 / 2M 小带宽独占保护 / 本地并发内存缓存
 # ================================================================
 
 # 定义颜色
@@ -27,7 +28,7 @@ get_public_ip() {
     echo "$ip"
 }
 
-# 极限内核网络优化 (BBR + BDP 缓冲区 + MTU 探测 + 队列扩展)
+# 极限内核网络优化 (BBR + BDP 缓冲区 + MTU 探测 + 闲置不降速)
 optimize_kernel() {
     echo -e "${YELLOW}>>> 正在执行 Linux 内核网络极限调优 (高时延与防丢包优化)...${NC}"
     [ ! -f /etc/sysctl.conf.bak ] && cp /etc/sysctl.conf /etc/sysctl.conf.bak
@@ -52,6 +53,8 @@ optimize_kernel() {
     sed -i '/net.ipv4.tcp_keepalive_time/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_keepalive_intvl/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_keepalive_probes/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_slow_start_after_idle/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_notsent_lowat/d' /etc/sysctl.conf
     sed -i '/fs.file-max/d' /etc/sysctl.conf
 
     # 写入极限优化配置
@@ -86,6 +89,10 @@ net.ipv4.tcp_keepalive_time = 300
 net.ipv4.tcp_keepalive_intvl = 15
 net.ipv4.tcp_keepalive_probes = 5
 
+# 【电商专属提速】闲置后不退回慢启动，保持大窗口；减少小带宽缓冲阻塞
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_notsent_lowat = 16384
+
 fs.file-max = 1000000
 SYSCTL_EOF
 
@@ -99,17 +106,90 @@ SYSCTL_EOF
         echo "root hard nofile 65535" >> /etc/security/limits.conf
     fi
 
-    # DNS 优化 (国内+国际混合优选，确保国内外均可极速解析)
+    echo -e "${GREEN}>>> 内核参数、TCP 32MB 缓冲区与防卡顿优化已生效！${NC}"
+}
+
+# 部署本地 dnsmasq 极速并发缓存 + 彻底干掉 10秒 DNS 超时
+setup_dns_accelerator() {
+    echo -e "${YELLOW}>>> 正在部署本地极速 DNS 内存缓存与并发解析加速 (解决10秒超时)...${NC}"
+    
+    # 1. 尝试安装 dnsmasq
+    if ! command -v dnsmasq >/dev/null 2>&1; then
+        echo -e "${CYAN}正在安装轻量级 DNS 缓存组件 (dnsmasq)...${NC}"
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -y >/dev/null 2>&1
+            apt-get install -y dnsmasq >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y dnsmasq >/dev/null 2>&1
+        fi
+    fi
+
+    # 2. 如果存在 systemd-resolved 占用 53 端口，释放该端口
+    if systemctl is-active --quiet systemd-resolved; then
+        sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null
+        sed -i 's/DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null
+        systemctl restart systemd-resolved >/dev/null 2>&1
+    fi
+
+    # 3. 写入 dnsmasq 配置: 并发查询所有上游(all-servers) + 10000条高速内存缓存
+    if command -v dnsmasq >/dev/null 2>&1; then
+        mkdir -p /etc/dnsmasq.d
+        cat << 'DNSMASQ_EOF' > /etc/dnsmasq.d/amazon_speed.conf
+# 晓林技术 - 亚马逊极速并发解析配置
+listen-address=127.0.0.1
+bind-interfaces
+cache-size=10000
+neg-ttl=60
+all-servers
+server=223.5.5.5
+server=119.29.29.29
+server=180.76.76.76
+server=114.114.114.114
+server=8.8.8.8
+server=1.1.1.1
+DNSMASQ_EOF
+        systemctl restart dnsmasq >/dev/null 2>&1
+        systemctl enable dnsmasq >/dev/null 2>&1
+        echo -e "${GREEN}>>> dnsmasq 毫秒级内存缓存服务已启动！${NC}"
+    fi
+
+    # 4. 配置 /etc/resolv.conf 强制压减超时到 1 秒并优先指向本地 127.0.0.1
     [ ! -f /etc/resolv.conf.bak ] && cp /etc/resolv.conf /etc/resolv.conf.bak
     chattr -i /etc/resolv.conf >/dev/null 2>&1
-    cat << 'DNS_EOF' > /etc/resolv.conf
+    cat << 'RESOLV_EOF' > /etc/resolv.conf
+# 优先走本地 dnsmasq 0ms 内存缓存
+nameserver 127.0.0.1
+# 国内优选高速 Anycast DNS
 nameserver 223.5.5.5
 nameserver 119.29.29.29
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-DNS_EOF
+nameserver 180.76.76.76
+# 关键救命参数: 单次超时压减至 1 秒，单次重试，并发通道，彻底杜绝 10 秒死等！
+options timeout:1 attempts:1 rotate single-request-reopen
+RESOLV_EOF
 
-    echo -e "${GREEN}>>> 内核参数、TCP 32MB 缓冲区与混合优选 DNS 优化已生效！${NC}"
+    # 5. 预热核心亚马逊卖家域名缓存 (预热至内存中，下次访问 0ms)
+    echo -e "${CYAN}正在预热亚马逊核心域名缓存至本地内存...${NC}"
+    curl -s --max-time 2 -o /dev/null https://sellercentral.amazon.com/ >/dev/null 2>&1 &
+    curl -s --max-time 2 -o /dev/null https://advertising.amazon.com/ >/dev/null 2>&1 &
+    curl -s --max-time 2 -o /dev/null https://www.amazon.com/ >/dev/null 2>&1 &
+
+    echo -e "${GREEN}>>> DNS 极速加速已就绪！DNS 解析时间预计将从 10秒 暴降至毫秒级！${NC}"
+}
+
+# 2M 带宽保护模式 (禁用后台自动更新与偷跑带宽)
+protect_bandwidth() {
+    echo -e "${YELLOW}>>> 正在启用 2M 小带宽独占保护模式 (禁用后台抢流与自动更新)...${NC}"
+    # 停止并禁用后台无用的定时更新服务 (防止在后台偷偷下载大文件挤爆 2M 带宽)
+    systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
+    systemctl disable apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
+    systemctl stop unattended-upgrades >/dev/null 2>&1
+    systemctl disable unattended-upgrades >/dev/null 2>&1
+
+    # 禁用系统错误转储上传
+    systemctl stop apport whoopsie >/dev/null 2>&1
+    systemctl disable apport whoopsie >/dev/null 2>&1
+
+    echo -e "${GREEN}>>> 后台抢带宽任务已全部关闭，2M 带宽已全额留给代理服务独享！${NC}"
 }
 
 # 智能多镜像下载 Gost 组件
@@ -320,9 +400,7 @@ manual_force_open_port() {
     main_menu
 }
 
-# ================================================================
-# 【新功能 1】：亚马逊卖家中心 & 广告后台 专项毫秒级测速与瓶颈诊断
-# ================================================================
+# 亚马逊卖家中心 & 广告后台 专项测速
 test_url_speed() {
     local target_url="$1"
     local desc_name="$2"
@@ -343,7 +421,6 @@ test_url_speed() {
 
     IFS='|' read -r http_code t_dns t_tcp t_ssl t_ttfb t_total <<< "$result"
 
-    # 换算成毫秒
     local ms_dns=$(awk "BEGIN {printf \"%.0f\", $t_dns * 1000}")
     local ms_tcp=$(awk "BEGIN {printf \"%.0f\", ($t_tcp - $t_dns) * 1000}")
     local ms_ssl=$(awk "BEGIN {printf \"%.0f\", ($t_ssl - $t_tcp) * 1000}")
@@ -372,31 +449,22 @@ test_amazon_suite() {
     echo -e "${YELLOW}================================================================${NC}"
     echo -e "将分别针对卖家中心、广告投放后台、商品详情主站及CDN节点进行压力诊断..."
 
-    # 1. 卖家中心
     test_url_speed "https://sellercentral.amazon.com/" "1. 亚马逊北美卖家中心 (Seller Central)"
-
-    # 2. 广告管理后台
     test_url_speed "https://advertising.amazon.com/campaign-manager/all-campaigns" "2. 亚马逊广告活动管理中心 (Campaign Manager)"
-
-    # 3. 亚马逊主站
     test_url_speed "https://www.amazon.com/" "3. 亚马逊北美主站商品前台 (Storefront)"
-
-    # 4. CDN 静态资源加速站
     test_url_speed "https://images-na.ssl-images-amazon.com/" "4. 亚马逊全球商品图片 CDN 加速节点"
 
     echo -e "\n${YELLOW}========================= 诊断分析与优化建议 =========================${NC}"
-    echo -e " 1. ${WHITE}DNS 解析${NC} < 50ms: DNS 表现极佳，本面板已注入阿里云/腾讯云/Cloudflare 优选解析；"
-    echo -e " 2. ${WHITE}TCP 连接${NC}: 反映当前 VPS 与亚马逊美东/美西机房的真实物理距离延迟；"
+    echo -e " 1. ${WHITE}DNS 解析${NC}: 若 < 50ms 说明本地缓存已生效；若接近 10000ms 请执行菜单 [2] 优化；"
+    echo -e " 2. ${WHITE}TCP 连接${NC}: 反映当前 VPS 与亚马逊美东/美西机房的真实物理距离延迟 (约150~200ms)；"
     echo -e " 3. ${WHITE}SSL 握手${NC}: 针对跨国链路，本脚本已开启 BBR + 32MB 缓冲区，大幅减少握手重传；"
-    echo -e " 4. 若总耗时 > 3000ms: 说明晚高峰运营商国际出口骨干网拥堵，属于跨国公网常态。"
+    echo -e " 4. 建议执行菜单项 [2] 部署 dnsmasq 极速缓存，第二次访问 DNS 直接降到 0 毫秒。"
     echo -e "${YELLOW}======================================================================${NC}"
     read -p "按回车键返回主菜单..." dummy
     main_menu
 }
 
-# ================================================================
-# 【新功能 2】：VPS IP 纯净度检测与【亚马逊防关联安全评估】
-# ================================================================
+# VPS IP 纯净度体检与亚马逊防关联评估
 check_ip_association_risk() {
     clear
     local ip=$(get_public_ip)
@@ -428,7 +496,6 @@ check_ip_association_risk() {
         is_proxy=$(echo "$info" | grep -o '"proxy":[^,}]*' | cut -d':' -f2 | tr -d ' ')
     fi
 
-    # 查询反向解析 PTR
     local ptr_name="无反向解析记录"
     if command -v host >/dev/null 2>&1; then
         ptr_name=$(host "$ip" 2>/dev/null | awk '{print $NF}' | sed 's/\.$//')
@@ -474,14 +541,28 @@ check_ip_association_risk() {
     main_menu
 }
 
-# 全自动一键部署 (内核调优 + 组件下载 + 配置启动)
+# 全自动一键部署 (内核调优 + DNS加速 + 2M带宽保护 + 组件下载 + 配置启动)
 install_all() {
     clear
     optimize_kernel
+    setup_dns_accelerator
+    protect_bandwidth
     download_gost
     if [ $? -eq 0 ]; then
         modify_config
     fi
+}
+
+# 单独一键优化 DNS 与带宽
+optimize_dns_and_bandwidth_only() {
+    clear
+    setup_dns_accelerator
+    protect_bandwidth
+    echo -e "\n${GREEN}================================================================${NC}"
+    echo -e "${GREEN}       恭喜！DNS 极速并发缓存与 2M 带宽保护已独立升级成功！     ${NC}"
+    echo -e "${GREEN}================================================================${NC}"
+    read -p "按回车键返回主菜单，可直接进行 [6] 测速体验效果..." dummy
+    main_menu
 }
 
 # 查看系统与网络状态
@@ -492,6 +573,12 @@ check_status() {
         echo -e "代理服务状态: ${GREEN}● 正在运行 (Active)${NC}"
     else
         echo -e "代理服务状态: ${RED}○ 未运行或异常${NC}"
+    fi
+
+    if systemctl is-active --quiet dnsmasq; then
+        echo -e "DNS 缓存加速: ${GREEN}● 正在运行 (dnsmasq 内存加速已就绪)${NC}"
+    else
+        echo -e "DNS 缓存加速: ${YELLOW}○ 未运行 (可执行菜单 2 安装)${NC}"
     fi
 
     local bbr_status=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
@@ -519,15 +606,17 @@ check_status() {
 manage_service() {
     clear
     echo -e "${YELLOW}=== 服务运行控制 ===${NC}"
-    echo -e "1. 重启服务"
-    echo -e "2. 停止服务"
-    echo -e "3. 开启服务"
+    echo -e "1. 重启代理服务 (gost)"
+    echo -e "2. 重启 DNS 缓存服务 (dnsmasq)"
+    echo -e "3. 停止代理服务"
+    echo -e "4. 开启代理服务"
     echo -e "0. 返回主菜单"
     read -p "请输入选项: " opt
     case "$opt" in
-        1) systemctl restart gost && echo -e "${GREEN}服务已重启${NC}" ;;
-        2) systemctl stop gost && echo -e "${YELLOW}服务已停止${NC}" ;;
-        3) systemctl start gost && echo -e "${GREEN}服务已启动${NC}" ;;
+        1) systemctl restart gost && echo -e "${GREEN}代理服务已重启${NC}" ;;
+        2) systemctl restart dnsmasq && echo -e "${GREEN}DNS 缓存服务已重启${NC}" ;;
+        3) systemctl stop gost && echo -e "${YELLOW}代理服务已停止${NC}" ;;
+        4) systemctl start gost && echo -e "${GREEN}代理服务已启动${NC}" ;;
         *) main_menu ;;
     esac
     sleep 2
@@ -540,8 +629,11 @@ uninstall_all() {
     echo -e "${RED}正在彻底卸载代理服务并还原系统环境...${NC}"
     systemctl stop gost >/dev/null 2>&1
     systemctl disable gost >/dev/null 2>&1
+    systemctl stop dnsmasq >/dev/null 2>&1
+    systemctl disable dnsmasq >/dev/null 2>&1
     rm -rf /etc/systemd/system/gost.service
     rm -rf /usr/bin/gost
+    rm -rf /etc/dnsmasq.d/amazon_speed.conf
     rm -rf "$CONFIG_FILE"
     rm -f /usr/bin/vps
 
@@ -553,6 +645,10 @@ uninstall_all() {
         chattr -i /etc/resolv.conf >/dev/null 2>&1
         mv -f /etc/resolv.conf.bak /etc/resolv.conf
     fi
+
+    # 恢复后台更新
+    systemctl enable apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
+    systemctl start apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
 
     echo -e "${GREEN}卸载完成！服务已清理，系统内核配置已还原，'vps' 命令已移除。${NC}"
     exit 0
@@ -570,31 +666,33 @@ main_menu() {
     echo -e "${YELLOW}================================================================${NC}"
     echo -e "${GREEN}   晓林技术 - 亚马逊 VPS 网络极限加速与防关联管理面板 (旗舰版)   ${NC}"
     echo -e "${YELLOW}================================================================${NC}"
-    echo -e "1. ${GREEN}一键全自动部署 (BBR + 32MB缓冲区调优 + 代理服务)${NC}"
-    echo -e "2. 修改 端口 / 账号 / 密码 (自动强开系统端口)"
-    echo -e "3. ${CYAN}【查询当前代理信息】(Socks5账号/密码/端口/一键导入格式)${NC}"
-    echo -e "4. ${YELLOW}【强行强开系统端口】(暴力释放占用 + 穿透系统防火墙)${NC}"
-    echo -e "5. ${PURPLE}【亚马逊卖家后台访问速度专项测速】(卖家后台/广告管理/毫秒级)${NC}"
-    echo -e "6. ${RED}【VPS IP 纯净度体检与防关联安全评估】(机房属性/防关联守则)${NC}"
-    echo -e "7. 查看系统内核加速状态 (BBR/32MB缓冲区/MTU探测)"
-    echo -e "8. 停止 / 开启 / 重启服务"
-    echo -e "9. 查看实时运行日志"
-    echo -e "10. ${RED}彻底卸载 (清除服务 + 还原内核配置 + 删除面板)${NC}"
+    echo -e "1. ${GREEN}一键全自动部署 (BBR + 32MB缓冲区 + DNS毫秒缓存 + 2M带宽保护)${NC}"
+    echo -e "2. ${CYAN}【一键独立升级 DNS 极速缓存与 2M 带宽保护】(立即解决10秒超时)${NC}"
+    echo -e "3. 修改 端口 / 账号 / 密码 (自动强开系统端口)"
+    echo -e "4. 【查询当前代理信息】(Socks5账号/密码/端口/一键导入格式)"
+    echo -e "5. 【强行强开系统端口】(暴力释放占用 + 穿透系统防火墙)"
+    echo -e "6. ${PURPLE}【亚马逊卖家后台访问速度专项测速】(卖家后台/广告管理/毫秒级)${NC}"
+    echo -e "7. ${RED}【VPS IP 纯净度体检与防关联安全评估】(机房属性/防关联守则)${NC}"
+    echo -e "8. 查看系统内核加速状态 (BBR/32MB缓冲区/MTU探测/DNS状态)"
+    echo -e "9. 停止 / 开启 / 重启服务 (gost / dnsmasq)"
+    echo -e "10. 查看实时运行日志"
+    echo -e "11. ${RED}彻底卸载 (清除服务 + 还原内核配置 + 删除面板)${NC}"
     echo -e "0. 退出面板"
     echo -e "${YELLOW}================================================================${NC}"
-    read -p "请输入数字选择 [0-10]: " num
+    read -p "请输入数字选择 [0-11]: " num
 
     case "$num" in
         1) install_all ;;
-        2) modify_config ;;
-        3) query_proxy_info ;;
-        4) manual_force_open_port ;;
-        5) test_amazon_suite ;;
-        6) check_ip_association_risk ;;
-        7) check_status ;;
-        8) manage_service ;;
-        9) view_logs ;;
-        10) uninstall_all ;;
+        2) optimize_dns_and_bandwidth_only ;;
+        3) modify_config ;;
+        4) query_proxy_info ;;
+        5) manual_force_open_port ;;
+        6) test_amazon_suite ;;
+        7) check_ip_association_risk ;;
+        8) check_status ;;
+        9) manage_service ;;
+        10) view_logs ;;
+        11) uninstall_all ;;
         0) exit 0 ;;
         *) echo -e "${RED}输入错误！${NC}" && sleep 2 && main_menu ;;
     esac
