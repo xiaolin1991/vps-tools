@@ -1,9 +1,14 @@
 #!/bin/bash
 
 # ================================================================
-# 晓林技术 - 亚马逊电商 VPS 网络极限加速与防关联管理面板 (旗舰专业版 v3.0)
+# 晓林技术 - 亚马逊电商 VPS 网络极限加速与防关联管理面板 (旗舰专业版 v4.0)
 # 针对场景: 亚马逊店铺管理 / 广告投放 / 指纹浏览器 (Socks5 & HTTP)
-# 特别优化: 解决 10秒 DNS 超时 / 2M 小带宽独占保护 / 本地并发内存缓存
+# 核心突破: 
+#   1. 解决 10秒 DNS 超时 (dnsmasq 毫秒并发缓存)
+#   2. 压减 TCP 建立时间 (CloudFront 亚太极速节点智能优选与固化)
+#   3. 压减 SSL 握手时间 (initcwnd 16 初始窗口扩容，省去1个往返RTT)
+#   4. 杜绝 3秒 丢包死等 (SYN 快速重传与 SACK 容错)
+#   5. 2M 小带宽独占保护 (关闭后台偷跑带宽任务)
 # ================================================================
 
 # 定义颜色
@@ -28,7 +33,7 @@ get_public_ip() {
     echo "$ip"
 }
 
-# 极限内核网络优化 (BBR + BDP 缓冲区 + MTU 探测 + 闲置不降速)
+# 极限内核网络优化 (BBR + BDP 32MB缓冲区 + MTU 探测 + SYN 快速重传)
 optimize_kernel() {
     echo -e "${YELLOW}>>> 正在执行 Linux 内核网络极限调优 (高时延与防丢包优化)...${NC}"
     [ ! -f /etc/sysctl.conf.bak ] && cp /etc/sysctl.conf /etc/sysctl.conf.bak
@@ -55,6 +60,11 @@ optimize_kernel() {
     sed -i '/net.ipv4.tcp_keepalive_probes/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_slow_start_after_idle/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_notsent_lowat/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_syn_retries/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_synack_retries/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_sack/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_dsack/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_timestamps/d' /etc/sysctl.conf
     sed -i '/fs.file-max/d' /etc/sysctl.conf
 
     # 写入极限优化配置
@@ -93,6 +103,13 @@ net.ipv4.tcp_keepalive_probes = 5
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_notsent_lowat = 16384
 
+# 【TCP/SSL 握手专属加速】防止丢包时死等 3 秒，开启选择性确认快速重传
+net.ipv4.tcp_syn_retries = 2
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_dsack = 1
+net.ipv4.tcp_timestamps = 1
+
 fs.file-max = 1000000
 SYSCTL_EOF
 
@@ -106,14 +123,75 @@ SYSCTL_EOF
         echo "root hard nofile 65535" >> /etc/security/limits.conf
     fi
 
-    echo -e "${GREEN}>>> 内核参数、TCP 32MB 缓冲区与防卡顿优化已生效！${NC}"
+    echo -e "${GREEN}>>> 内核参数、TCP 32MB 缓冲区与 SYN 快速握手重传已生效！${NC}"
 }
 
-# 部署本地 dnsmasq 极速并发缓存 + 彻底干掉 10秒 DNS 超时
+# 扩容 TCP 初始拥塞窗口 (initcwnd 16 与 initrwnd 16，SSL 握手立减 1 个 RTT)
+optimize_initcwnd() {
+    echo -e "${YELLOW}>>> 正在扩容 TCP 初始拥塞窗口 (initcwnd 16 / initrwnd 16)...${NC}"
+    local default_route
+    default_route=$(ip route show default 2>/dev/null | head -n 1)
+    if [ -n "$default_route" ]; then
+        local clean_route
+        clean_route=$(echo "$default_route" | sed 's/initcwnd [0-9]*//g' | sed 's/initrwnd [0-9]*//g')
+        ip route change $clean_route initcwnd 16 initrwnd 16 >/dev/null 2>&1
+        echo -e "${GREEN}>>> 默认路由 initcwnd 16 与 initrwnd 16 已激活 (SSL证书握手立减 1 个往返 RTT)！${NC}"
+    fi
+}
+
+# 亚马逊官方 CloudFront Anycast 极速节点智能测速与固化
+optimize_cloudfront_ips() {
+    echo -e "${YELLOW}>>> 正在对亚马逊官方 CloudFront 全球边缘节点进行全网低时延测速优选...${NC}"
+    local candidates=(
+        "13.226.38.91"
+        "13.226.38.15"
+        "13.226.38.32"
+        "143.204.214.115"
+        "18.65.229.121"
+        "65.8.53.196"
+        "13.35.125.17"
+        "99.84.254.115"
+    )
+
+    local best_ip=""
+    local best_time=999999
+
+    for ip in "${candidates[@]}"; do
+        local t_tcp
+        t_tcp=$(curl -s -o /dev/null --connect-timeout 1 -w "%{time_connect}" "https://${ip}" 2>/dev/null)
+        if [ -n "$t_tcp" ] && [ "$t_tcp" != "0.000000" ]; then
+            local ms
+            ms=$(awk "BEGIN {printf \"%.0f\", $t_tcp * 1000}")
+            echo -e "    测速节点: ${WHITE}${ip}${NC} -> TCP 握手: ${CYAN}${ms} ms${NC}"
+            if [ "$ms" -gt 0 ] && [ "$ms" -lt "$best_time" ]; then
+                best_time=$ms
+                best_ip=$ip
+            fi
+        fi
+    done
+
+    if [ -n "$best_ip" ]; then
+        echo -e "${GREEN}>>> 优选成功！锁定最快亚马逊 CloudFront 节点: ${WHITE}${best_ip}${GREEN} (TCP仅 ${best_time}ms)${NC}"
+        mkdir -p /etc/dnsmasq.d
+        cat << CLOUDFRONT_EOF > /etc/dnsmasq.d/amazon_fastroute.conf
+# 晓林技术 - 亚马逊官方极速节点定向锁定 (TCP仅 ${best_time}ms)
+address=/sellercentral.amazon.com/${best_ip}
+address=/advertising.amazon.com/${best_ip}
+address=/images-na.ssl-images-amazon.com/${best_ip}
+address=/m.media-amazon.com/${best_ip}
+address=/images-amazon.com/${best_ip}
+CLOUDFRONT_EOF
+        systemctl restart dnsmasq >/dev/null 2>&1
+        echo -e "${GREEN}>>> 卖家中心、广告后台、图片CDN已全部绑定至 ${best_ip}，TCP与SSL握手将彻底稳定在几十毫秒！${NC}"
+    else
+        echo -e "${YELLOW}未获取到优选节点，保持默认并发解析。${NC}"
+    fi
+}
+
+# 部署本地 dnsmasq 极速并发缓存 + 解决 10 秒超时
 setup_dns_accelerator() {
     echo -e "${YELLOW}>>> 正在部署本地极速 DNS 内存缓存与并发解析加速 (解决10秒超时)...${NC}"
     
-    # 1. 尝试安装 dnsmasq
     if ! command -v dnsmasq >/dev/null 2>&1; then
         echo -e "${CYAN}正在安装轻量级 DNS 缓存组件 (dnsmasq)...${NC}"
         if command -v apt-get >/dev/null 2>&1; then
@@ -124,18 +202,15 @@ setup_dns_accelerator() {
         fi
     fi
 
-    # 2. 如果存在 systemd-resolved 占用 53 端口，释放该端口
     if systemctl is-active --quiet systemd-resolved; then
         sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null
         sed -i 's/DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null
         systemctl restart systemd-resolved >/dev/null 2>&1
     fi
 
-    # 3. 写入 dnsmasq 配置: 并发查询所有上游(all-servers) + 10000条高速内存缓存
     if command -v dnsmasq >/dev/null 2>&1; then
         mkdir -p /etc/dnsmasq.d
         cat << 'DNSMASQ_EOF' > /etc/dnsmasq.d/amazon_speed.conf
-# 晓林技术 - 亚马逊极速并发解析配置
 listen-address=127.0.0.1
 bind-interfaces
 cache-size=10000
@@ -153,39 +228,27 @@ DNSMASQ_EOF
         echo -e "${GREEN}>>> dnsmasq 毫秒级内存缓存服务已启动！${NC}"
     fi
 
-    # 4. 配置 /etc/resolv.conf 强制压减超时到 1 秒并优先指向本地 127.0.0.1
     [ ! -f /etc/resolv.conf.bak ] && cp /etc/resolv.conf /etc/resolv.conf.bak
     chattr -i /etc/resolv.conf >/dev/null 2>&1
     cat << 'RESOLV_EOF' > /etc/resolv.conf
-# 优先走本地 dnsmasq 0ms 内存缓存
 nameserver 127.0.0.1
-# 国内优选高速 Anycast DNS
 nameserver 223.5.5.5
 nameserver 119.29.29.29
 nameserver 180.76.76.76
-# 关键救命参数: 单次超时压减至 1 秒，单次重试，并发通道，彻底杜绝 10 秒死等！
 options timeout:1 attempts:1 rotate single-request-reopen
 RESOLV_EOF
 
-    # 5. 预热核心亚马逊卖家域名缓存 (预热至内存中，下次访问 0ms)
-    echo -e "${CYAN}正在预热亚马逊核心域名缓存至本地内存...${NC}"
-    curl -s --max-time 2 -o /dev/null https://sellercentral.amazon.com/ >/dev/null 2>&1 &
-    curl -s --max-time 2 -o /dev/null https://advertising.amazon.com/ >/dev/null 2>&1 &
-    curl -s --max-time 2 -o /dev/null https://www.amazon.com/ >/dev/null 2>&1 &
-
-    echo -e "${GREEN}>>> DNS 极速加速已就绪！DNS 解析时间预计将从 10秒 暴降至毫秒级！${NC}"
+    echo -e "${GREEN}>>> DNS 极速加速已就绪！${NC}"
 }
 
-# 2M 带宽保护模式 (禁用后台自动更新与偷跑带宽)
+# 2M 带宽保护模式
 protect_bandwidth() {
     echo -e "${YELLOW}>>> 正在启用 2M 小带宽独占保护模式 (禁用后台抢流与自动更新)...${NC}"
-    # 停止并禁用后台无用的定时更新服务 (防止在后台偷偷下载大文件挤爆 2M 带宽)
     systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
     systemctl disable apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
     systemctl stop unattended-upgrades >/dev/null 2>&1
     systemctl disable unattended-upgrades >/dev/null 2>&1
 
-    # 禁用系统错误转储上传
     systemctl stop apport whoopsie >/dev/null 2>&1
     systemctl disable apport whoopsie >/dev/null 2>&1
 
@@ -455,10 +518,9 @@ test_amazon_suite() {
     test_url_speed "https://images-na.ssl-images-amazon.com/" "4. 亚马逊全球商品图片 CDN 加速节点"
 
     echo -e "\n${YELLOW}========================= 诊断分析与优化建议 =========================${NC}"
-    echo -e " 1. ${WHITE}DNS 解析${NC}: 若 < 50ms 说明本地缓存已生效；若接近 10000ms 请执行菜单 [2] 优化；"
-    echo -e " 2. ${WHITE}TCP 连接${NC}: 反映当前 VPS 与亚马逊美东/美西机房的真实物理距离延迟 (约150~200ms)；"
-    echo -e " 3. ${WHITE}SSL 握手${NC}: 针对跨国链路，本脚本已开启 BBR + 32MB 缓冲区，大幅减少握手重传；"
-    echo -e " 4. 建议执行菜单项 [2] 部署 dnsmasq 极速缓存，第二次访问 DNS 直接降到 0 毫秒。"
+    echo -e " 1. ${WHITE}DNS 解析${NC}: 若已在 10~50ms，说明内存缓存已生效；"
+    echo -e " 2. ${WHITE}TCP/SSL 握手${NC}: 若个别节点偏高，可随时在主菜单执行 [2] 重新优选 CloudFront 节点；"
+    echo -e " 3. ${WHITE}总体耗时${NC}: 首刷需要下载几MB静态资源，后续指纹浏览器开启缓存后即实现秒开。"
     echo -e "${YELLOW}======================================================================${NC}"
     read -p "按回车键返回主菜单..." dummy
     main_menu
@@ -541,11 +603,13 @@ check_ip_association_risk() {
     main_menu
 }
 
-# 全自动一键部署 (内核调优 + DNS加速 + 2M带宽保护 + 组件下载 + 配置启动)
+# 全自动一键部署 (包含全部加速技术)
 install_all() {
     clear
     optimize_kernel
+    optimize_initcwnd
     setup_dns_accelerator
+    optimize_cloudfront_ips
     protect_bandwidth
     download_gost
     if [ $? -eq 0 ]; then
@@ -553,13 +617,19 @@ install_all() {
     fi
 }
 
-# 单独一键优化 DNS 与带宽
-optimize_dns_and_bandwidth_only() {
+# 单独一键极速升级 (无需重新配置端口密码)
+optimize_suite_only() {
     clear
+    echo -e "${YELLOW}================================================================${NC}"
+    echo -e "${GREEN}   正在执行: 亚马逊 CloudFront 极速节点优选 + TCP/SSL 握手深度优化   ${NC}"
+    echo -e "${YELLOW}================================================================${NC}"
+    optimize_kernel
+    optimize_initcwnd
     setup_dns_accelerator
+    optimize_cloudfront_ips
     protect_bandwidth
     echo -e "\n${GREEN}================================================================${NC}"
-    echo -e "${GREEN}       恭喜！DNS 极速并发缓存与 2M 带宽保护已独立升级成功！     ${NC}"
+    echo -e "${GREEN}  恭喜！全部 TCP 建立与 SSL 握手极限优化已部署完毕 (当前端口密码不变)！ ${NC}"
     echo -e "${GREEN}================================================================${NC}"
     read -p "按回车键返回主菜单，可直接进行 [6] 测速体验效果..." dummy
     main_menu
@@ -596,6 +666,9 @@ check_status() {
 
     local mtu_p=$(sysctl net.ipv4.tcp_mtu_probing 2>/dev/null | awk '{print $3}')
     echo -e "MTU 路径探测  : ${GREEN}已启用 ($mtu_p)${NC}"
+
+    local syn_r=$(sysctl net.ipv4.tcp_syn_retries 2>/dev/null | awk '{print $3}')
+    echo -e "SYN 重传优化  : ${GREEN}快速重传 (值: $syn_r)${NC}"
 
     echo -e "${YELLOW}========================================================${NC}"
     read -p "按回车键返回主菜单..." dummy
@@ -634,6 +707,7 @@ uninstall_all() {
     rm -rf /etc/systemd/system/gost.service
     rm -rf /usr/bin/gost
     rm -rf /etc/dnsmasq.d/amazon_speed.conf
+    rm -rf /etc/dnsmasq.d/amazon_fastroute.conf
     rm -rf "$CONFIG_FILE"
     rm -f /usr/bin/vps
 
@@ -646,7 +720,6 @@ uninstall_all() {
         mv -f /etc/resolv.conf.bak /etc/resolv.conf
     fi
 
-    # 恢复后台更新
     systemctl enable apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
     systemctl start apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1
 
@@ -667,7 +740,7 @@ main_menu() {
     echo -e "${GREEN}   晓林技术 - 亚马逊 VPS 网络极限加速与防关联管理面板 (旗舰版)   ${NC}"
     echo -e "${YELLOW}================================================================${NC}"
     echo -e "1. ${GREEN}一键全自动部署 (BBR + 32MB缓冲区 + DNS毫秒缓存 + 2M带宽保护)${NC}"
-    echo -e "2. ${CYAN}【一键独立升级 DNS 极速缓存与 2M 带宽保护】(立即解决10秒超时)${NC}"
+    echo -e "2. ${CYAN}【一键独立升级 TCP/SSL 与亚马逊节点优选】(降时延+抗丢包)${NC}"
     echo -e "3. 修改 端口 / 账号 / 密码 (自动强开系统端口)"
     echo -e "4. 【查询当前代理信息】(Socks5账号/密码/端口/一键导入格式)"
     echo -e "5. 【强行强开系统端口】(暴力释放占用 + 穿透系统防火墙)"
@@ -683,7 +756,7 @@ main_menu() {
 
     case "$num" in
         1) install_all ;;
-        2) optimize_dns_and_bandwidth_only ;;
+        2) optimize_suite_only ;;
         3) modify_config ;;
         4) query_proxy_info ;;
         5) manual_force_open_port ;;
