@@ -192,8 +192,12 @@ CLOUDFRONT_EOF
 setup_dns_accelerator() {
     echo -e "${YELLOW}>>> 正在部署本地极速 DNS 内存缓存与并发解析加速 (解决10秒超时)...${NC}"
     
+    # 1. 释放 dpkg 锁并强力安装 dnsmasq
     if ! command -v dnsmasq >/dev/null 2>&1; then
         echo -e "${CYAN}正在安装轻量级 DNS 缓存组件 (dnsmasq)...${NC}"
+        killall apt apt-get dpkg >/dev/null 2>&1
+        rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* >/dev/null 2>&1
+        dpkg --configure -a >/dev/null 2>&1
         if command -v apt-get >/dev/null 2>&1; then
             apt-get update -y >/dev/null 2>&1
             apt-get install -y dnsmasq >/dev/null 2>&1
@@ -202,12 +206,13 @@ setup_dns_accelerator() {
         fi
     fi
 
-    if systemctl is-active --quiet systemd-resolved; then
-        sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null
-        sed -i 's/DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null
-        systemctl restart systemd-resolved >/dev/null 2>&1
-    fi
+    # 2. 彻底释放 53 端口冲突 (停止 systemd-resolved 并清理占用)
+    systemctl stop systemd-resolved >/dev/null 2>&1
+    systemctl disable systemd-resolved >/dev/null 2>&1
+    fuser -k -9 53/udp >/dev/null 2>&1
+    fuser -k -9 53/tcp >/dev/null 2>&1
 
+    # 3. 写入 dnsmasq 配置
     if command -v dnsmasq >/dev/null 2>&1; then
         mkdir -p /etc/dnsmasq.d
         cat << 'DNSMASQ_EOF' > /etc/dnsmasq.d/amazon_speed.conf
@@ -223,9 +228,12 @@ server=114.114.114.114
 server=8.8.8.8
 server=1.1.1.1
 DNSMASQ_EOF
+        systemctl unmask dnsmasq >/dev/null 2>&1
         systemctl restart dnsmasq >/dev/null 2>&1
         systemctl enable dnsmasq >/dev/null 2>&1
-        echo -e "${GREEN}>>> dnsmasq 毫秒级内存缓存服务已启动！${NC}"
+        if systemctl is-active --quiet dnsmasq; then
+            echo -e "${GREEN}>>> dnsmasq 毫秒级内存缓存服务已成功启动并在 127.0.0.1 运行！${NC}"
+        fi
     fi
 
     [ ! -f /etc/resolv.conf.bak ] && cp /etc/resolv.conf /etc/resolv.conf.bak
