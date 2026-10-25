@@ -1,4 +1,4 @@
-# 📦 VPS 加速管理面板
+# 📦 VPS 亚马逊Amazon加速管理面板
 
 这个脚本专为亚马逊卖家设计，集成了 **BBR 加速**和 **Socks5 轻量代理**，旨在不改变 IP 的前提下提升跨境访问后台的速度。
 
@@ -11,10 +11,15 @@ wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/mai
 ```
 ### 或者 国内镜像加速版
 ```
-wget -O /usr/bin/vps https://ghproxy.net/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
+wget -4 -O /usr/bin/vps https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
+```
+```
+wget -4 -O /usr/bin/vps https://gh-proxy.com/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 ```
 
-### VPS专用一键脚本如下：快捷方式：```sb```
+
+
+### VPS专用singbox一键脚本如下：快捷方式：```sb```
 ```
 bash <(wget -qO- https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)
 ```
