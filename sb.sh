@@ -14,7 +14,13 @@ white(){ echo -e "\033[37m\033[01m$1\033[0m";}
 readp(){ read -p "$(yellow "$1")" $2;}
 [[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit
 
-# 自动将当前脚本复制为系统快捷命令 sb，避免手动修改后调用失败
+# 晓林技术服务专属：命令行一键更新支持 (sb update 或 sb -u)
+if [[ "$1" == "update" || "$1" == "-u" ]]; then
+    upsb_xl
+    exit 0
+fi
+
+# 晓林技术服务专属：自动将当前脚本写入 /usr/bin/sb 快捷方式，避免手动执行后丢失快捷命令
 if [[ -f "${BASH_SOURCE[0]}" && "$(readlink -f "${BASH_SOURCE[0]}")" != "/usr/bin/sb" ]]; then
     cp -f "${BASH_SOURCE[0]}" /usr/bin/sb 2>/dev/null
     chmod +x /usr/bin/sb 2>/dev/null
@@ -22,7 +28,7 @@ elif [[ -f "$0" && "$(readlink -f "$0")" != "/usr/bin/sb" ]]; then
     cp -f "$0" /usr/bin/sb 2>/dev/null
     chmod +x /usr/bin/sb 2>/dev/null
 fi
-
+stty erase $'\b' 2>/dev/null || stty erase '^H' 2>/dev/null
 #[[ -e /etc/hosts ]] && grep -qE '^ *172.65.251.78 gitlab.com' /etc/hosts || echo -e '\n172.65.251.78 gitlab.com' >> /etc/hosts
 if [[ -f /etc/redhat-release ]]; then
 release="Centos"
@@ -44,7 +50,7 @@ else
 red "脚本不支持当前的系统，请选择使用Ubuntu,Debian,Centos系统。" && exit
 fi
 export sbfiles="/etc/s-box/sb10.json /etc/s-box/sb11.json /etc/s-box/sb.json"
-export sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' | cut -d '.' -f 1,2)
+export sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' 2>/dev/null | cut -d '.' -f 1,2)
 vsid=$(grep -i version_id /etc/os-release | cut -d \" -f2 | cut -d . -f1)
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
 #if [[ $(echo "$op" | grep -i -E "arch|alpine") ]]; then
@@ -69,7 +75,7 @@ fi
 hostname=$(hostname)
 
 if [ ! -f sbyg_update ]; then
-green "首次安装Sing-box-yg脚本必要的依赖……"
+green "首次安装Sing-box脚本必要的依赖……"
 if command -v apk >/dev/null 2>&1; then
 apk update
 apk add bash libc6-compat jq openssl procps busybox-extras iproute2 iputils coreutils expect git socat iptables grep tar tzdata util-linux
@@ -143,6 +149,7 @@ fi
 v4v6(){
 v4=$(curl -s4m5 icanhazip.com -k)
 v6=$(curl -s6m5 icanhazip.com -k)
+#v4dq=$(curl -s4m5 -k https://myip.ipip.net | awk -F'来自于：' '{print $2}' 2>/dev/null)
 v4dq=$(curl -s4m5 -k https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null)
 v6dq=$(curl -s6m5 -k https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null)
 }
@@ -220,7 +227,7 @@ inssb(){
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 green "使用哪个内核版本？"
 yellow "1：使用目前最新正式版内核 (回车默认)"
-yellow "2：使用之前1.10.7正式版内核"
+yellow "2：使用之前1.10.7正式版内核 (支持geosite分流、IP优选级切换，无Anytls协议)"
 readp "请选择【1-2】：" menu
 if [ -z "$menu" ] || [ "$menu" = "1" ] ; then
 sbcore=$(curl -Ls https://github.com/SagerNet/sing-box/releases/latest | grep -oP 'tag/v\K[0-9.]+' | head -n 1)
@@ -237,7 +244,7 @@ if [[ -f '/etc/s-box/sing-box' ]]; then
 chown root:root /etc/s-box/sing-box
 chmod +x /etc/s-box/sing-box
 blue "成功安装 Sing-box 内核版本：$(/etc/s-box/sing-box version | awk '/version/{print $NF}')"
-sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' | cut -d '.' -f 1,2)
+sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' 2>/dev/null | cut -d '.' -f 1,2)
 else
 red "下载 Sing-box 内核不完整，安装失败，请再运行安装一次" && exit
 fi
@@ -293,10 +300,10 @@ red "生成bing自签证书失败" && exit
 fi
 echo
 if [[ -f /root/ygkkkca/cert.crt && -f /root/ygkkkca/private.key && -s /root/ygkkkca/cert.crt && -s /root/ygkkkca/private.key ]]; then
-yellow "经检测，之前已申请过Acme域名证书：$(cat /root/ygkkkca/ca.log) "
-green "是否使用 $(cat /root/ygkkkca/ca.log) 域名证书？"
+yellow "经检测，之前已使用Acme-yg脚本申请过Acme域名IP证书：$(cat /root/ygkkkca/ca.log) "
+green "是否使用 $(cat /root/ygkkkca/ca.log) 域名IP证书？"
 yellow "1：否！使用自签的证书 (回车默认)"
-yellow "2：是！使用 $(cat /root/ygkkkca/ca.log) 域名证书"
+yellow "2：是！使用 $(cat /root/ygkkkca/ca.log) 域名IP证书"
 readp "请选择【1-2】：" menu
 if [ -z "$menu" ] || [ "$menu" = "1" ] ; then
 zqzs
@@ -304,9 +311,9 @@ else
 ymzs
 fi
 else
-green "如果你有解析完成的域名，是否申请一个Acme域名证书？"
+green "是否申请一个Acme域名IP证书？"
 yellow "1：否！继续使用自签的证书 (回车默认)"
-yellow "2：是！申请Acme证书 (支持常规80端口模式与Dns API模式)"
+yellow "2：是！使用Acme-yg脚本申请Acme证书 (支持80端口域名IP证书模式与Dns API域名模式)"
 readp "请选择【1-2】：" menu
 if [ -z "$menu" ] || [ "$menu" = "1" ] ; then
 zqzs
@@ -1030,19 +1037,23 @@ fi
 if [[ -f /etc/s-box/cfvmadd_argo.txt ]]; then
 vmadd_argo=$(cat /etc/s-box/cfvmadd_argo.txt 2>/dev/null)
 else
-vmadd_argo=www.visa.com.sg
+vmadd_argo=cloudflare-ech.com
 fi
 hy2_port=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[2].listen_port')
 hy2_ports=$(iptables -t nat -nL --line 2>/dev/null | grep -w "$hy2_port" | awk '{print $8}' | sed 's/dpts://; s/dpt://' | tr '\n' ',' | sed 's/,$//')
 if [[ -n $hy2_ports ]]; then
-hy2ports=$(echo $hy2_ports | sed 's/:/-/g')
-hyps=$hy2_port,$hy2ports
+cmhy2pt=$(echo $hy2_ports | tr ':' '-')
+hyps="&mport=$cmhy2pt"
+sbhy2pt=$(echo "$hy2_ports" | grep -o '[0-9]\+:[0-9]\+' | sed 's/.*/"&"/' | paste -sd,)
 else
 hyps=
 fi
 ym=$(cat /root/ygkkkca/ca.log 2>/dev/null)
 hy2_sniname=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[2].tls.key_path')
 if [[ "$hy2_sniname" = '/etc/s-box/private.key' ]]; then
+SHA256=$(openssl x509 -in /etc/s-box/cert.pem -outform DER | sha256sum | awk '{print $1}')
+echo "$SHA256" > /etc/s-box/SHA256.txt
+SHA256=$(cat /etc/s-box/SHA256.txt)
 hy2_name=www.bing.com
 sb_hy2_ip=$server_ip
 cl_hy2_ip=$server_ipcl
@@ -1107,16 +1118,16 @@ echo
 
 resvmess(){
 if [[ "$tls" = "false" ]]; then
-if ps -ef 2>/dev/null | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1; then
+if ps -ef 2>/dev/null | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1; then
 echo
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 red "🚀【 vmess-ws(tls)+Argo 】临时节点信息如下(可选择3-8-3，自定义CDN优选地址)：" && sleep 2
 echo
 echo "分享链接【v2rayn、v2rayng、nekobox、小火箭shadowrocket】"
-echo -e "${yellow}vmess://$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argo'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"8443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argo'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0)${plain}"
+echo -e "${yellow}vmess://$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argo'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argo'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0)${plain}"
 echo
 echo "二维码【v2rayn、v2rayng、nekobox、小火箭shadowrocket】"
-echo 'vmess://'$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argo'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"8443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argo'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0) > /etc/s-box/vm_ws_argols.txt
+echo 'vmess://'$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argo'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argo'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0) > /etc/s-box/vm_ws_argols.txt
 qrencode -o - -t ANSIUTF8 "$(cat /etc/s-box/vm_ws_argols.txt)"
 fi
 if ps -ef 2>/dev/null | grep -q '[c]loudflared.*run'; then
@@ -1126,10 +1137,10 @@ white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 red "🚀【 vmess-ws(tls)+Argo 】固定节点信息如下 (可选择3-8-3，自定义CDN优选地址)：" && sleep 2
 echo
 echo "分享链接【v2rayn、v2rayng、nekobox、小火箭shadowrocket】"
-echo -e "${yellow}vmess://$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argogd'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"8443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argogd'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0)${plain}"
+echo -e "${yellow}vmess://$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argogd'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argogd'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0)${plain}"
 echo
 echo "二维码【v2rayn、v2rayng、nekobox、小火箭shadowrocket】"
-echo 'vmess://'$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argogd'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"8443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argogd'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0) > /etc/s-box/vm_ws_argogd.txt
+echo 'vmess://'$(echo '{"add":"'$vmadd_argo'","aid":"0","host":"'$argogd'","id":"'$uuid'","net":"ws","path":"'$ws_path'","port":"443","ps":"'vm-argo-$hostname'","tls":"tls","sni":"'$argogd'","fp":"chrome","type":"none","v":"2"}' | base64 -w 0) > /etc/s-box/vm_ws_argogd.txt
 qrencode -o - -t ANSIUTF8 "$(cat /etc/s-box/vm_ws_argogd.txt)"
 fi
 echo
@@ -1161,8 +1172,8 @@ echo
 reshy2(){
 echo
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-hy2_link="hysteria2://$uuid@$sb_hy2_ip:$hy2_port?security=tls&alpn=h3&insecure=$ins_hy2&mport=$hyps&sni=$hy2_name#hy2-$hostname"
-#hy2_link="hysteria2://$uuid@$sb_hy2_ip:$hy2_port?security=tls&alpn=h3&insecure=$ins_hy2&sni=$hy2_name#hy2-$hostname"
+hy2_link="hysteria2://$uuid@$sb_hy2_ip:$hy2_port?security=tls&alpn=h3&insecure=0&allowInsecure=0$hyps&sni=$hy2_name&pinSHA256=$SHA256#hy2-$hostname"
+#hy2_link="hysteria2://$uuid@$sb_hy2_ip:$hy2_port?security=tls&alpn=h3&insecure=$ins_hy2&allowInsecure=$ins_hy2$hyps&sni=$hy2_name#hy2-$hostname"
 echo "$hy2_link" > /etc/s-box/hy2.txt
 red "🚀【 Hysteria-2 】节点信息如下：" && sleep 2
 echo
@@ -1178,7 +1189,7 @@ echo
 restu5(){
 echo
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-tuic5_link="tuic://$uuid:$uuid@$sb_tu5_ip:$tu5_port?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$tu5_name&allow_insecure=$ins&allowInsecure=$ins#tu5-$hostname"
+tuic5_link="tuic://$uuid:$uuid@$sb_tu5_ip:$tu5_port?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$tu5_name&insecure=$ins&allowInsecure=$ins&allow_insecure=$ins#tu5-$hostname"
 echo "$tuic5_link" > /etc/s-box/tuic5.txt
 red "🚀【 Tuic-v5 】节点信息如下：" && sleep 2
 echo
@@ -1194,7 +1205,7 @@ echo
 resan(){
 echo
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-an_link="anytls://$uuid@$sb_an_ip:$an_port?&sni=$an_name&allowInsecure=$ins_an#anytls-$hostname"
+an_link="anytls://$uuid@$sb_an_ip:$an_port?&sni=$an_name&allowInsecure=$ins_an&insecure=$ins_an#anytls-$hostname"
 echo "$an_link" > /etc/s-box/an.txt
 red "🚀【 Anytls】节点信息如下：" && sleep 2
 echo
@@ -1208,6 +1219,15 @@ echo
 }
 
 sb_client(){
+
+sbhy2ports(){
+if [[ -n $hy2_ports ]]; then
+    cat <<EOF
+  "server_ports": [ $sbhy2pt ],
+EOF
+fi
+}
+
 sbany1(){
   if [[ "$sbnh" != "1.10" ]]; then
     echo "\"anytls-$hostname\","
@@ -1260,155 +1280,156 @@ EOF
 sball(){
 cat <<EOF
 {
-    "log": {
-        "disabled": false,
-        "level": "info",
-        "timestamp": true
-    },
-    "experimental": {
-        "cache_file": {
-            "enabled": true,
-            "path": "./cache.db",
-            "store_fakeip": true
-        },
-        "clash_api": {
-            "external_controller": "127.0.0.1:9090",
-            "external_ui": "ui",
-            "default_mode": "Rule"
-        }
-    },
-    "dns": {
-        "servers": [
-            {
-                "tag": "aliDns",
-                "type": "https",
-                "server": "dns.alidns.com",
-                "path": "/dns-query",
-                "domain_resolver": "local"
-            },
-            {
-                "tag": "local",
-                "type": "udp",
-                "server": "223.5.5.5"
-            },
-            {
-                "tag": "proxyDns",
-                "type": "https",
-                "server": "dns.google",
-                "path": "/dns-query",
-	            "domain_resolver": "aliDns",
-                "detour": "proxy"
-            },
-           {
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "http_clients": [
+    {
+      "tag": "rule-set-direct"
+    }
+  ],
+  "dns": {
+    "servers": [
+      {
         "type": "fakeip",
         "tag": "fakeip",
         "inet4_range": "198.18.0.0/15",
         "inet6_range": "fc00::/18"
+      },
+      {
+        "type": "udp",
+        "tag": "dns-cn",
+        "server": "223.5.5.5",
+        "server_port": 53
+      },
+      {
+        "type": "https",
+        "tag": "dns-proxy",
+        "server": "dns.google",
+        "domain_resolver": "dns-cn",
+        "detour": "proxy"
       }
+    ],
+    "rules": [
+      {
+        "rule_set": [
+          "geosite-cn"
         ],
-        "rules": [
-            {
-                "rule_set": "geosite-cn",
-                "clash_mode": "Rule",
-                "server": "aliDns"
-            },
-            {
-                "clash_mode": "Direct",
-                "server": "local"
-            },
-            {
-                "clash_mode": "Global",
-                "server": "proxyDns"
-            },
-            {
+        "action": "route",
+        "server": "dns-cn"
+      },
+      {
         "query_type": [
           "A",
           "AAAA"
         ],
+        "action": "route",
         "server": "fakeip"
       }
-        ],
-        "final": "proxyDns",
-        "strategy": "prefer_ipv4",
-        "independent_cache": true
-    },
-    "inbounds": [
-        {
-            "type": "tun",
-            "tag": "tun-in",
-            "address": [
-                "172.19.0.1/30",
-                "fd00::1/126"
-            ],
-            "auto_route": true,
-            "strict_route": true
-        }
     ],
-    "route": {
-        "rules": [
-            {
-	           "inbound": "tun-in",
-                "action": "sniff"
-            },
-            {
-                "type": "logical",
-                "mode": "or",
-                "rules": [
-                    {
-                        "port": 53
-                    },
-                    {
-                        "protocol": "dns"
-                    }
-                ],
-                "action": "hijack-dns"
-            },
-         {
-          "clash_mode": "Global",
-          "outbound": "proxy"
-         },
-        {
-        "rule_set": "geosite-cn",
-        "clash_mode": "Rule",
-        "outbound": "direct"
-       },
-     {
-    "rule_set": "geoip-cn",
-    "clash_mode": "Rule",
-    "outbound": "direct"
+    "final": "dns-proxy",
+    "strategy": "prefer_ipv4",
+    "cache_capacity": 8192,
+    "optimistic": {
+      "enabled": true,
+      "timeout": "1h"
+    },
+    "timeout": "10s",
+    "reverse_mapping": true
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "mtu": 1420
+    }
+  ],
+  "route": {
+    "default_http_client": "rule-set-direct",
+    "default_domain_resolver": "dns-cn",
+    "auto_detect_interface": true,
+    "rule_set": [
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs"
       },
-     {
-    "ip_is_private": true,
-    "clash_mode": "Rule",
-    "outbound": "direct"
-    },
-     {
-      "clash_mode": "Direct",
-      "outbound": "direct"
-     }		
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs"
+      }
+    ],
+    "rules": [
+      {
+        "inbound": [
+          "tun-in"
         ],
+        "protocol": [
+          "dns"
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "clash_mode": "Global",
+        "action": "route",
+        "outbound": "proxy"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
         "rule_set": [
-            {
-                "tag": "geosite-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-cn.srs",
-                "download_detour": "direct"
-            },
-            {
-                "tag": "geoip-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
-                "download_detour": "direct"
-            }
+          "geosite-cn"
         ],
-        "final": "proxy",
-        "auto_detect_interface": true,
-        "default_domain_resolver": {
-            "server": "aliDns"
-        }
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geoip-cn"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "clash_mode": "Direct",
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "network": [
+          "tcp",
+          "udp"
+        ],
+        "port": 853,
+        "action": "reject"
+      }
+    ],
+    "final": "proxy"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "store_dns": true
     },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "default_mode": "Rule"
+    }
+  },
   "outbounds": [
     {
       "type": "vless",
@@ -1444,7 +1465,6 @@ cat <<EOF
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -1464,6 +1484,7 @@ cat <<EOF
         "tag": "hy2-$hostname",
         "server": "$cl_hy2_ip",
         "server_port": $hy2_port,
+$(sbhy2ports)
         "password": "$uuid",
         "tls": {
             "enabled": true,
@@ -1528,18 +1549,13 @@ dns:
     - "time.*.gov"
     - "pool.ntp.org"
     - "localhost.work.weixin.qq.com"
-  default-nameserver: ["223.5.5.5", "1.2.4.8"]
+  default-nameserver: ["223.5.5.5", "119.29.29.29"]
   nameserver:
-    - "https://208.67.222.222/dns-query"
     - "https://1.1.1.1/dns-query"
-    - "https://8.8.4.4/dns-query"
+    - "https://8.8.8.8/dns-query"
   proxy-server-nameserver:
     - "https://223.5.5.5/dns-query"
     - "https://doh.pub/dns-query"
-  nameserver-policy:
-    "geosite:private,cn":
-      - "https://223.5.5.5/dns-query"
-      - "https://doh.pub/dns-query"
 
 proxies:
 - name: vless-reality-vision-$hostname               
@@ -1576,7 +1592,8 @@ proxies:
 - name: hysteria2-$hostname                            
   type: hysteria2                                      
   server: $cl_hy2_ip                               
-  port: $hy2_port                                
+  port: $hy2_port
+  ports: $cmhy2pt
   password: $uuid                          
   alpn:
     - h3
@@ -1591,7 +1608,7 @@ proxies:
   uuid: $uuid       
   password: $uuid   
   alpn: [h3]
-  disable-sni: true
+  disable-sni: $tu5_ins
   reduce-rtt: true
   udp-relay-mode: native
   congestion-controller: bbr
@@ -1601,13 +1618,13 @@ EOF
 }
 
 tls=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].tls.enabled')
-if ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' && ps -ef 2>/dev/null | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1 && [ "$tls" = "false" ]; then
+if ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' && ps -ef 2>/dev/null | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1 && [ "$tls" = "false" ]; then
 cat > /etc/s-box/sbox.json <<EOF
 $(sball)
 $(sbany2)
 {
             "server": "$vmadd_argo",
-            "server_port": 8443,
+            "server_port": 443,
             "tag": "vmess-tls-argo固定-$hostname",
             "tls": {
                 "enabled": true,
@@ -1618,7 +1635,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -1645,7 +1661,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -1661,7 +1676,7 @@ $(sbany2)
         },
 {
             "server": "$vmadd_argo",
-            "server_port": 8443,
+            "server_port": 443,
             "tag": "vmess-tls-argo临时-$hostname",
             "tls": {
                 "enabled": true,
@@ -1672,7 +1687,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -1699,7 +1713,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -1723,7 +1736,7 @@ $(sbany2)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname",
-        $(sbany1)
+$(sbany1)
         "vmess-tls-argo固定-$hostname",
         "vmess-argo固定-$hostname",
         "vmess-tls-argo临时-$hostname",
@@ -1738,7 +1751,7 @@ $(sbany2)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname",
-        $(sbany1)
+$(sbany1)
         "vmess-tls-argo固定-$hostname",
         "vmess-argo固定-$hostname",
         "vmess-tls-argo临时-$hostname",
@@ -1746,7 +1759,8 @@ $(sbany2)
             ],
             "url": "http://www.gstatic.com/generate_204",
             "interval": "10m",
-            "tolerance": 50
+            "tolerance": 30,
+            "idle_timeout": "30m"
         },
         {
             "type": "direct",
@@ -1764,7 +1778,7 @@ $(clany2)
 - name: vmess-tls-argo固定-$hostname                         
   type: vmess
   server: $vmadd_argo                        
-  port: 8443                                     
+  port: 443                                     
   uuid: $uuid       
   alterId: 0
   cipher: auto
@@ -1797,7 +1811,7 @@ $(clany2)
 - name: vmess-tls-argo临时-$hostname                         
   type: vmess
   server: $vmadd_argo                        
-  port: 8443                                     
+  port: 443                                     
   uuid: $uuid       
   alterId: 0
   cipher: auto
@@ -1876,17 +1890,18 @@ proxy-groups:
     - vmess-argo临时-$hostname
 rules:
   - GEOIP,LAN,DIRECT
+  - GEOSITE,CN,DIRECT
   - GEOIP,CN,DIRECT
   - MATCH,🌍选择代理节点
 EOF
 
-elif ! ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' && ps -ef 2>/dev/null | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1 && [ "$tls" = "false" ]; then
+elif ! ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' && ps -ef 2>/dev/null | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1 && [ "$tls" = "false" ]; then
 cat > /etc/s-box/sbox.json <<EOF
 $(sball)
 $(sbany2)
 {
             "server": "$vmadd_argo",
-            "server_port": 8443,
+            "server_port": 443,
             "tag": "vmess-tls-argo临时-$hostname",
             "tls": {
                 "enabled": true,
@@ -1897,7 +1912,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -1924,7 +1938,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -1948,7 +1961,7 @@ $(sbany2)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname",
-        $(sbany1)
+$(sbany1)
         "vmess-tls-argo临时-$hostname",
         "vmess-argo临时-$hostname"
             ]
@@ -1961,13 +1974,14 @@ $(sbany2)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname",
-        $(sbany1)
+$(sbany1)
         "vmess-tls-argo临时-$hostname",
         "vmess-argo临时-$hostname"
             ],
             "url": "http://www.gstatic.com/generate_204",
             "interval": "10m",
-            "tolerance": 50
+            "tolerance": 30,
+            "idle_timeout": "30m"
         },
         {
             "type": "direct",
@@ -1992,7 +2006,7 @@ $(clany2)
 - name: vmess-tls-argo临时-$hostname                         
   type: vmess
   server: $vmadd_argo                        
-  port: 8443                                     
+  port: 443                                     
   uuid: $uuid       
   alterId: 0
   cipher: auto
@@ -2065,17 +2079,18 @@ proxy-groups:
     - vmess-argo临时-$hostname
 rules:
   - GEOIP,LAN,DIRECT
+  - GEOSITE,CN,DIRECT
   - GEOIP,CN,DIRECT
   - MATCH,🌍选择代理节点
 EOF
 
-elif ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' && ! ps -ef 2>/dev/null | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1 && [ "$tls" = "false" ]; then
+elif ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' && ! ps -ef 2>/dev/null | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1 && [ "$tls" = "false" ]; then
 cat > /etc/s-box/sbox.json <<EOF
 $(sball)
 $(sbany2)
 {
             "server": "$vmadd_argo",
-            "server_port": 8443,
+            "server_port": 443,
             "tag": "vmess-tls-argo固定-$hostname",
             "tls": {
                 "enabled": true,
@@ -2086,7 +2101,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -2113,7 +2127,6 @@ $(sbany2)
                     "fingerprint": "chrome"
                 }
             },
-            "packet_encoding": "packetaddr",
             "transport": {
                 "headers": {
                     "Host": [
@@ -2137,7 +2150,7 @@ $(sbany2)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname",
-        $(sbany1)
+$(sbany1)
         "vmess-tls-argo固定-$hostname",
         "vmess-argo固定-$hostname"
             ]
@@ -2150,13 +2163,14 @@ $(sbany2)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname",
-        $(sbany1)
+$(sbany1)
         "vmess-tls-argo固定-$hostname",
         "vmess-argo固定-$hostname"
             ],
             "url": "http://www.gstatic.com/generate_204",
             "interval": "10m",
-            "tolerance": 50
+            "tolerance": 30,
+            "idle_timeout": "30m"
         },
         {
             "type": "direct",
@@ -2179,7 +2193,7 @@ $(clany2)
 - name: vmess-tls-argo固定-$hostname                         
   type: vmess
   server: $vmadd_argo                        
-  port: 8443                                     
+  port: 443                                     
   uuid: $uuid       
   alterId: 0
   cipher: auto
@@ -2252,6 +2266,7 @@ proxy-groups:
     - vmess-argo固定-$hostname
 rules:
   - GEOIP,LAN,DIRECT
+  - GEOSITE,CN,DIRECT
   - GEOIP,CN,DIRECT
   - MATCH,🌍选择代理节点
 EOF
@@ -2267,7 +2282,7 @@ $(sbany2)
             "outbounds": [
         "auto",
         "vless-$hostname",
-		$(sbany1)
+$(sbany1)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname"
@@ -2278,14 +2293,15 @@ $(sbany2)
             "type": "urltest",
             "outbounds": [
         "vless-$hostname",
-		$(sbany1)
+$(sbany1)
         "vmess-$hostname",
         "hy2-$hostname",
         "tuic5-$hostname"
             ],
             "url": "http://www.gstatic.com/generate_204",
             "interval": "10m",
-            "tolerance": 50
+            "tolerance": 30,
+            "idle_timeout": "30m"
         },
         {
             "type": "direct",
@@ -2338,6 +2354,7 @@ proxy-groups:
     $(clany1)
 rules:
   - GEOIP,LAN,DIRECT
+  - GEOSITE,CN,DIRECT
   - GEOIP,CN,DIRECT
   - MATCH,🌍选择代理节点
 EOF
@@ -2374,6 +2391,7 @@ curl -L -o /etc/s-box/cloudflared -# --retry 2 https://github.com/cloudflare/clo
 #curl -L -o /etc/s-box/cloudflared -# --retry 2 https://gitlab.com/rwkgyg/sing-box-yg/-/raw/main/$cpu
 chmod +x /etc/s-box/cloudflared
 fi
+green "Argo版本：V$(/etc/s-box/cloudflared version 2>/dev/null | awk '{print $3}')"
 }
 
 cfargoym(){
@@ -2392,6 +2410,10 @@ if [ "$menu" = "1" ]; then
 cloudflaredargo
 readp "输入Argo固定隧道Token: " argotoken
 readp "输入Argo固定隧道域名: " argoym
+vm_port=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')
+echo
+yellow "注意！Zero Trust设置固定隧道URL端口填写Vmess端口：localhost:$vm_port"
+echo
 pid=$(ps -ef 2>/dev/null | awk '/[c]loudflared.*run/ {print $2}')
 [ -n "$pid" ] && kill -9 "$pid" >/dev/null 2>&1
 echo
@@ -2433,9 +2455,9 @@ fi
 fi
 echo ${argoym} > /etc/s-box/sbargoym.log
 echo ${argotoken} > /etc/s-box/sbargotoken.log
-argo=$(cat /etc/s-box/sbargoym.log 2>/dev/null)
+argosh=$(cat /etc/s-box/sbargoym.log 2>/dev/null)
 sbshare > /dev/null 2>&1
-blue "Argo固定隧道设置完成，固定域名：$argo"
+blue "Argo固定隧道设置完成，固定域名：$argosh"
 elif [ "$menu" = "2" ]; then
 if pidof systemd >/dev/null 2>&1; then
 systemctl stop argo >/dev/null 2>&1
@@ -2446,7 +2468,7 @@ rc-service argo stop >/dev/null 2>&1
 rc-update del argo default >/dev/null 2>&1
 rm -rf /etc/init.d/argo
 fi
-rm -rf /etc/s-box/vm_ws_argogd.txt
+rm -rf /etc/s-box/vm_ws_argogd.txt /etc/s-box/cloudflared
 sbshare > /dev/null 2>&1
 green "Argo固定隧道已停止"
 else
@@ -2463,7 +2485,7 @@ readp "请选择【0-2】：" menu
 if [ "$menu" = "1" ]; then
 green "请稍等……"
 cloudflaredargo
-ps -ef | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" | awk '{print $2}' | xargs kill 2>/dev/null
+ps -ef | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" | awk '{print $2}' | xargs kill 2>/dev/null
 nohup /etc/s-box/cloudflared tunnel --url http://localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port') --edge-ip-version auto --no-autoupdate --protocol http2 > /etc/s-box/argo.log 2>&1 &
 sleep 20
 if [[ -n $(curl -sL https://$(cat /etc/s-box/argo.log 2>/dev/null | grep -a trycloudflare.com | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')/ -I | awk 'NR==1 && /404|400|503/') ]]; then
@@ -2491,12 +2513,12 @@ else
 yellow "Argo临时域名验证暂不可用，请稍后再试"
 fi
 elif [ "$menu" = "2" ]; then
-ps -ef | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" | awk '{print $2}' | xargs kill 2>/dev/null
+ps -ef | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" | awk '{print $2}' | xargs kill 2>/dev/null
 crontab -l 2>/dev/null > /tmp/crontab.tmp
 sed -i '/url http/d' /tmp/crontab.tmp
 crontab /tmp/crontab.tmp >/dev/null 2>&1
 rm /tmp/crontab.tmp
-rm -rf /etc/s-box/vm_ws_argols.txt
+rm -rf /etc/s-box/vm_ws_argols.txt /etc/s-box/cloudflared
 rm -rf /etc/local.d/alpineargo.start
 sbshare > /dev/null 2>&1
 green "Argo临时隧道已停止"
@@ -2531,8 +2553,9 @@ warpwg
 inssbjsonser
 sbservice
 sbactive
+#curl -sL https://gitlab.com/rwkgyg/sing-box-yg/-/raw/main/version/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-lnsb && blue "Sing-box-yg脚本安装成功，脚本快捷方式：sb" && cronsb
+lnsb && blue "Sing-box脚本安装成功，脚本快捷方式：sb" && cronsb
 echo
 wgcfgo
 sbshare
@@ -2781,9 +2804,9 @@ green "1：更换Hysteria2主端口 (原多端口自动重置删除)"
 green "2：添加Hysteria2多端口"
 green "3：重置删除Hysteria2多端口"
 green "0：返回上层"
-readp "请选择【0-3】：" menu
+readp "请选择【0-4】：" menu
 if [ "$menu" = "1" ]; then
-if [ -n $hy2_ports ]; then
+if [ -n "$hy2_ports" ]; then
 hy2deports
 hy2port
 echo $sbfiles | xargs -n1 sed -i "67s/$hy2_port/$port_hy2/"
@@ -2808,10 +2831,10 @@ else
 changeport
 fi
 elif [ "$menu" = "3" ]; then
-if [ -n $hy2_ports ]; then
-hy2deports && sbshare > /dev/null 2>&1 && changeport
+if [ -n "$hy2_ports" ]; then
+hy2deports && sbshare > /dev/null 2>&1 yellow "Hysteria2多端口已删除" && changeport
 else
-yellow "Hysteria2未设置多端口" && changeport
+sbshare > /dev/null 2>&1 && yellow "Hysteria2未设置多端口" && changeport
 fi
 else
 changeport
@@ -2824,7 +2847,7 @@ green "3：重置删除Tuic5多端口"
 green "0：返回上层"
 readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
-if [ -n $tu5_ports ]; then
+if [ -n "$tu5_ports" ]; then
 tu5deports
 tu5port
 echo $sbfiles | xargs -n1 sed -i "89s/$tu5_port/$port_tu/"
@@ -2849,10 +2872,10 @@ else
 changeport
 fi
 elif [ "$menu" = "3" ]; then
-if [ -n $tu5_ports ]; then
-tu5deports && sbshare > /dev/null 2>&1 && changeport
+if [ -n "$tu5_ports" ]; then
+tu5deports && sbshare > /dev/null 2>&1 yellow "Tuic5多端口已删除" && changeport
 else
-yellow "Tuic5未设置多端口" && changeport
+sbshare > /dev/null 2>&1 && yellow "Tuic5未设置多端口" && changeport
 fi
 else
 changeport
@@ -2939,7 +2962,7 @@ readp "输入Telegram机器人用户ID: " userid
 telegram_id=$userid
 echo '#!/bin/bash
 export LANG=en_US.UTF-8
-sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' | cut -d '.' -f 1,2)
+sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' 2>/dev/null | cut -d '.' -f 1,2)
 total_lines=$(wc -l < /etc/s-box/clmi.yaml)
 half=$((total_lines / 2))
 head -n $half /etc/s-box/clmi.yaml > /etc/s-box/clash_meta_client1.txt
@@ -3165,10 +3188,13 @@ sleep 1 && green "本地IP订阅链接已更新完成" && sleep 3 && sb
 vmesscfadd(){
 echo
 green "推荐使用稳定的世界大厂或组织的官方CDN域名作为CDN优选地址："
+blue "cloudflare-ech.com"
 blue "www.visa.com.sg"
 blue "www.wto.org"
-blue "www.web.com"
-blue "yg1.ygkkk.dpdns.org (yg1中的1，可换为1-11中任意数字，晓林技术服务推荐)"
+blue "www.shopify.com"
+blue "yg1.ygkkk.dpdns.org (yg1中的1，可换为1-13中任意数字)"
+echo
+yellow "恢复默认操作：选项1设置为VPS的IP或者解析的域名，选项2设置为www.bing.com或者解析的域名"
 echo
 yellow "1：自定义Vmess-ws(tls)主协议节点的CDN优选地址"
 yellow "2：针对选项1，重置客户端host/sni域名(IP解析到CF上的域名)"
@@ -3185,13 +3211,16 @@ fi
 echo
 readp "输入自定义的优选IP/域名：" menu
 echo "$menu" > /etc/s-box/cfvmadd_local.txt
+sbshare > /dev/null 2>&1
 green "设置成功，选择主菜单9进行节点配置更新" && sleep 2 && vmesscfadd
 elif  [ "$menu" = "2" ]; then
 rm -rf /etc/s-box/cfymjx.txt
+sbshare > /dev/null 2>&1
 green "重置成功，可选择1重新设置" && sleep 2 && vmesscfadd
 elif  [ "$menu" = "3" ]; then
 readp "输入自定义的优选IP/域名：" menu
 echo "$menu" > /etc/s-box/cfvmadd_argo.txt
+sbshare > /dev/null 2>&1
 green "设置成功，选择主菜单9进行节点配置更新" && sleep 2 && vmesscfadd
 else
 changeserv
@@ -3526,8 +3555,8 @@ echo
 [[ "$sbnh" == "1.10" ]] && blue "当前Sing-box内核支持geosite分流方式" || blue "当前Sing-box内核不支持geosite分流方式，仅支持分流2、3、5、6选项"
 echo
 yellow "注意："
-yellow "一、完整域名方式只能填完整域名 (例：谷歌网站填写：www.google.com)"
-yellow "二、geosite方式须填写geosite规则名 (例：奈飞填写:netflix ；迪士尼填写:disney ；ChatGPT填写:openai ；全局且绕过中国填写:geolocation-!cn)"
+yellow "一、后缀域名方式只能填域名 (例：谷歌网站填写：google.com googleapis.com)"
+yellow "二、geosite方式须填写geosite规则名 (例：奈飞填写netflix ；迪士尼填写disney ；ChatGPT填写openai ；全局且绕过中国填写geolocation-!cn)"
 yellow "三、同一个完整域名或者geosite切勿重复分流"
 yellow "四、如分流通道中有个别通道无网络，所填分流为黑名单模式，即屏蔽该网站访问"
 changef
@@ -3550,9 +3579,9 @@ readp "请选择：" menu
 
 if [ "$menu" = "1" ]; then
 if [[ "$sbnh" == "1.10" ]]; then
-readp "1：使用完整域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
+readp "1：使用后缀域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
 if [ "$menu" = "1" ]; then
-readp "每个域名之间留空格，回车跳过表示重置清空warp-wireguard-ipv4的完整域名方式的分流通道)：" w4flym
+readp "每个域名之间留空格，回车跳过表示重置清空warp-wireguard-ipv4的后缀域名方式的分流通道)：" w4flym
 if [ -z "$w4flym" ]; then
 w4flym='"yg_kkk"'
 else
@@ -3581,9 +3610,9 @@ yellow "遗憾！当前暂时只支持warp-wireguard-ipv6，如需要warp-wiregu
 fi
 
 elif [ "$menu" = "2" ]; then
-readp "1：使用完整域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
+readp "1：使用后缀域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
 if [ "$menu" = "1" ]; then
-readp "每个域名之间留空格，回车跳过表示重置清空warp-wireguard-ipv6的完整域名方式的分流通道：" w6flym
+readp "每个域名之间留空格，回车跳过表示重置清空warp-wireguard-ipv6的后缀域名方式的分流通道：" w6flym
 if [ -z "$w6flym" ]; then
 w6flym='"yg_kkk"'
 else
@@ -3616,9 +3645,9 @@ changef
 fi
 
 elif [ "$menu" = "3" ]; then
-readp "1：使用完整域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
+readp "1：使用后缀域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
 if [ "$menu" = "1" ]; then
-readp "每个域名之间留空格，回车跳过表示重置清空warp-socks5-ipv4的完整域名方式的分流通道：" s4flym
+readp "每个域名之间留空格，回车跳过表示重置清空warp-socks5-ipv4的后缀域名方式的分流通道：" s4flym
 if [ -z "$s4flym" ]; then
 s4flym='"yg_kkk"'
 else
@@ -3652,9 +3681,9 @@ fi
 
 elif [ "$menu" = "4" ]; then
 if [[ "$sbnh" == "1.10" ]]; then
-readp "1：使用完整域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
+readp "1：使用后缀域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
 if [ "$menu" = "1" ]; then
-readp "每个域名之间留空格，回车跳过表示重置清空warp-socks5-ipv6的完整域名方式的分流通道：" s6flym
+readp "每个域名之间留空格，回车跳过表示重置清空warp-socks5-ipv6的后缀域名方式的分流通道：" s6flym
 if [ -z "$s6flym" ]; then
 s6flym='"yg_kkk"'
 else
@@ -3684,9 +3713,9 @@ fi
 
 elif [ "$menu" = "5" ]; then
 if [[ "$sbnh" == "1.10" ]]; then
-readp "1：使用完整域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
+readp "1：使用后缀域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
 if [ "$menu" = "1" ]; then
-readp "每个域名之间留空格，回车跳过表示重置清空VPS本地ipv4的完整域名方式的分流通道：" ad4flym
+readp "每个域名之间留空格，回车跳过表示重置清空VPS本地ipv4的后缀域名方式的分流通道：" ad4flym
 if [ -z "$ad4flym" ]; then
 ad4flym='"yg_kkk"'
 else
@@ -3720,9 +3749,9 @@ fi
 
 elif [ "$menu" = "6" ]; then
 if [[ "$sbnh" == "1.10" ]]; then
-readp "1：使用完整域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
+readp "1：使用后缀域名方式\n2：使用geosite方式\n3：返回上层\n请选择：" menu
 if [ "$menu" = "1" ]; then
-readp "每个域名之间留空格，回车跳过表示重置清空VPS本地ipv6的完整域名方式的分流通道：" ad6flym
+readp "每个域名之间留空格，回车跳过表示重置清空VPS本地ipv6的后缀域名方式的分流通道：" ad6flym
 if [ -z "$ad6flym" ]; then
 ad6flym='"yg_kkk"'
 else
@@ -3819,12 +3848,43 @@ fi
 if [[ -n "$spath" && -f "$spath" && "$(readlink -f "$spath")" != "/usr/bin/sb" ]]; then
     cp -f "$spath" /usr/bin/sb 2>/dev/null
     chmod +x /usr/bin/sb 2>/dev/null
+else
+    # 兜底：如果是直接网络管道执行，拉取晓林仓库版本
+    if [[ ! -f /usr/bin/sb || ! -s /usr/bin/sb ]]; then
+        curl -L -o /usr/bin/sb -# --retry 2 "https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh" 2>/dev/null || curl -L -o /usr/bin/sb -# --retry 2 "https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh" 2>/dev/null
+        chmod +x /usr/bin/sb 2>/dev/null
+    fi
+fi
+}
+
+upsb_xl(){
+green "正在从晓林官方仓库获取最新管理脚本……"
+local tmp_sb="/tmp/sb_new.sh"
+rm -f "$tmp_sb"
+if curl -sL -m 10 --retry 2 "https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh" -o "$tmp_sb" && grep -q "XIAOLIN" "$tmp_sb"; then
+    mv -f "$tmp_sb" /usr/bin/sb
+    chmod +x /usr/bin/sb
+    green "升级成功！已无缝更新至晓林技术服务最新管理脚本！" && sleep 2 && sb
+elif curl -sL -m 10 --retry 2 "https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh" -o "$tmp_sb" && grep -q "XIAOLIN" "$tmp_sb"; then
+    mv -f "$tmp_sb" /usr/bin/sb
+    chmod +x /usr/bin/sb
+    green "升级成功（国内极速源）！已更新至晓林技术服务最新管理脚本！" && sleep 2 && sb
+else
+    rm -f "$tmp_sb"
+    red "更新失败！无法连接到更新源或内容校验未通过，已为您保留当前版本。" && sleep 3 && sb
 fi
 }
 
 lapre(){
-latcore=$(curl -Ls https://github.com/SagerNet/sing-box/releases/latest | grep -oP 'tag/v\K[0-9.]+' | head -n 1)
-precore=$(curl -Ls https://github.com/SagerNet/sing-box/releases | grep -oP '/tag/v\K[0-9.]+-[^"]+' | head -n 1)
+json=$(curl -Ls --max-time 3 https://data.jsdelivr.com/v1/package/gh/SagerNet/sing-box)
+if echo "$json"|grep -q '"versions"'; then
+latcore=$(echo "$json"|grep -Eo '"[0-9.]+",'|head -n1|tr -d '",')
+precore=$(echo "$json"|grep -Eo '"[0-9.]*-[^"]*"'|head -n1|tr -d '",')
+else
+page=$(curl -Ls --max-time 3 https://github.com/SagerNet/sing-box/releases)
+latcore=$(echo "$page"|grep -oE 'tag/v[0-9.]+'|head -n1|cut -d'v' -f2)
+precore=$(echo "$page"|grep -oE '/tag/v[0-9.]+-[^"]+'|head -n1|cut -d'v' -f2)
+fi
 inscore=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}')
 }
 
@@ -3835,6 +3895,7 @@ lapre
 green "1：升级/切换Sing-box最新正式版 v$latcore  ${bblue}${lat}${plain}"
 green "2：升级/切换Sing-box最新测试版 v$precore  ${bblue}${pre}${plain}"
 green "3：切换Sing-box某个正式版或测试版，需指定版本号 (建议1.10.0以上版本)"
+green "4：更新 晓林技术服务 管理脚本 (从 xiaolin1991 官方源)"
 green "0：返回上层"
 readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
@@ -3847,6 +3908,8 @@ red "注意: 版本号在 https://github.com/SagerNet/sing-box/tags 可查，且
 green "正式版版本号格式：数字.数字.数字 (例：1.10.7   注意，1.10系列内核支持geosite分流，1.10以上内核不支持geosite分流"
 green "测试版版本号格式：数字.数字.数字-alpha或rc或beta.数字 (例：1.13.0-alpha或rc或beta.1)"
 readp "请输入Sing-box版本号：" upcore
+elif [ "$menu" = "4" ]; then
+upsb_xl
 else
 sb
 fi
@@ -3861,7 +3924,7 @@ rm -rf /etc/s-box/{sing-box.tar.gz,$sbname}
 if [[ -f '/etc/s-box/sing-box' ]]; then
 chown root:root /etc/s-box/sing-box
 chmod +x /etc/s-box/sing-box
-sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' | cut -d '.' -f 1,2)
+sbnh=$(/etc/s-box/sing-box version 2>/dev/null | awk '/version/{print $NF}' 2>/dev/null | cut -d '.' -f 1,2)
 [[ "$sbnh" == "1.10" ]] && num=10 || num=11
 rm -rf /etc/s-box/sb.json
 cp /etc/s-box/sb${num}.json /etc/s-box/sb.json
@@ -3892,7 +3955,7 @@ systemctl disable "$svc" >/dev/null 2>&1
 done
 rm -rf /etc/systemd/system/{sing-box.service,argo.service}
 fi
-ps -ef | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json 2>/dev/null | jq -r '.inbounds[1].listen_port')" | awk '{print $2}' | xargs kill 2>/dev/null
+ps -ef | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json 2>/dev/null | jq -r '.inbounds[1].listen_port')" | awk '{print $2}' | xargs kill 2>/dev/null
 ps -ef | grep '[s]bwpph' | awk '{print $2}' | xargs kill 2>/dev/null
 kill -15 $(pgrep -f 'websbox' 2>/dev/null) >/dev/null 2>&1
 rm -rf /etc/s-box sbyg_update /usr/bin/sb /root/geoip.db /root/geosite.db /root/warpapi /root/warpip /root/websbox
@@ -3902,7 +3965,7 @@ iptables -t nat -F PREROUTING >/dev/null 2>&1
 netfilter-persistent save >/dev/null 2>&1
 service iptables save >/dev/null 2>&1
 green "Sing-box卸载完成！"
-blue "欢迎继续使用晓林技术服务管理脚本：bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)"
+blue "欢迎继续使用Sing-box脚本：bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/sb.sh)"
 echo
 }
 
@@ -3975,7 +4038,7 @@ white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 echo
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 red "🚀SFA/SFI/SFW配置文件显示如下："
-red "安卓SFA、苹果SFI，win电脑官方文件包SFW请向晓林技术服务获取，"
+red "安卓SFA、苹果SFI，win电脑客户端请到 GitHub 官方或发布页自行下载，"
 red "文件目录 /etc/s-box/sbox.json ，复制自建以json文件格式为准" && sleep 2
 echo
 cat /etc/s-box/sbox.json
@@ -4011,7 +4074,7 @@ allports
 sbymfl
 tls=$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].tls.enabled')
 if [[ "$tls" = "false" ]]; then
-if ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' || ps -ef 2>/dev/null | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1; then
+if ps -ef 2>/dev/null | grep -q '[c]loudflared.*run' || ps -ef 2>/dev/null | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1; then
 vm_zs="TLS关闭"
 argoym="已开启"
 else
@@ -4054,7 +4117,7 @@ fi
 if [ "$argoym" = "已开启" ]; then
 #echo -e "Vmess-UUID：${yellow}$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[0].users[0].uuid')${plain}"
 #echo -e "Vmess-Path：${yellow}$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].transport.path')${plain}"
-if ps -ef 2>/dev/null | grep "localhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1; then
+if ps -ef 2>/dev/null | grep "[l]ocalhost:$(sed 's://.*::g' /etc/s-box/sb.json | jq -r '.inbounds[1].listen_port')" >/dev/null 2>&1; then
 echo -e "Argo临时域名：${yellow}$(cat /etc/s-box/argo.log 2>/dev/null | grep -a trycloudflare.com | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')${plain}"
 fi
 if ps -ef 2>/dev/null | grep -q '[c]loudflared.*run'; then
@@ -4196,14 +4259,14 @@ yellow "0：返回上层"
 readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
 ins
-nohup /etc/s-box/sbwpph -b 127.0.0.1:$port --gool -$sw46 --endpoint 162.159.192.1:2408 >/dev/null 2>&1 &
+nohup /etc/s-box/sbwpph -b 127.0.0.1:$port -$sw46 --endpoint 162.159.192.1:2408 >/dev/null 2>&1 &
 green "申请IP中……请稍等……" && sleep 20
 resv1=$(curl -sm3 --socks5 localhost:$port icanhazip.com)
 resv2=$(curl -sm3 -x socks5h://localhost:$port icanhazip.com)
 if [[ -z $resv1 && -z $resv2 ]]; then
 red "WARP-plus-Socks5的IP获取失败" && unins && exit
 else
-echo "/etc/s-box/sbwpph -b 127.0.0.1:$port --gool -$sw46 --endpoint 162.159.192.1:2408 >/dev/null 2>&1" > /etc/s-box/sbwpph.log
+echo "/etc/s-box/sbwpph -b 127.0.0.1:$port -$sw46 --endpoint 162.159.192.1:2408 >/dev/null 2>&1" > /etc/s-box/sbwpph.log
 aplws5
 green "WARP-plus-Socks5的IP获取成功，可进行Socks5代理分流"
 fi
@@ -4281,7 +4344,7 @@ white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 white "服务提供 ：晓林技术服务"
 white "业务范围 ：专业/稳定/高效的技术支持"
 white "技术交流 ：欢迎联系晓林获取最新资讯"
-white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
+white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 white "Vless-reality-vision、Vmess-ws(tls)+Argo、Hy2、Tuic、Anytls 五协议共存脚本"
 white "脚本快捷方式：sb"
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
@@ -4303,9 +4366,11 @@ green "13. 添加 WARP-plus-Socks5 代理模式 【本地Warp/多地区Psiphon-V
 green "14. 刷新本地IP、调整IPV4/IPV6配置输出"
 white "----------------------------------------------------------------------------------"
 green "15. 晓林技术服务脚本使用说明书"
+green "16. 更新 晓林技术服务 管理脚本"
 white "----------------------------------------------------------------------------------"
 green " 0. 退出脚本"
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+
 
 lapre
 if [ -f '/etc/s-box/sb.json' ]; then
@@ -4318,7 +4383,7 @@ echo -e "当前 Sing-box 最新测试版内核：${bblue}${precore}${plain} (可
 else
 echo
 echo -e "当前 Sing-box 已安装正式版内核：${bblue}${inscore}${plain}"
-echo -e "检测到最新 Sing-box 正式版内核：${yellow}${latcore}${plain} (可选择7进行更新)"
+echo -e "检测到最新 Sing-box 正式版内核：${yellow}${latcore}${plain} (可选择8进行更新)"
 echo
 echo -e "当前 Sing-box 最新测试版内核：${bblue}${precore}${plain} (可切换)"
 fi
@@ -4331,7 +4396,7 @@ echo -e "当前 Sing-box 最新正式版内核：${bblue}${latcore}${plain} (可
 else
 echo
 echo -e "当前 Sing-box 已安装测试版内核：${bblue}${inscore}${plain}"
-echo -e "检测到最新 Sing-box 测试版内核：${yellow}${precore}${plain} (可选择7进行更新)"
+echo -e "检测到最新 Sing-box 测试版内核：${yellow}${precore}${plain} (可选择8进行更新)"
 echo
 echo -e "当前 Sing-box 最新正式版内核：${bblue}${latcore}${plain} (可切换)"
 fi
@@ -4401,7 +4466,7 @@ showprotocol
 fi
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 echo
-readp "请输入数字【0-15】:" Input
+readp "请输入数字【0-16】:" Input
 case "$Input" in  
  1 ) instsllsingbox;;
  2 ) unins;;
@@ -4418,5 +4483,6 @@ case "$Input" in
 13 ) inssbwpph;;
 14 ) wgcfgo && sbshare;;
 15 ) sbsm;;
+16 ) upsb_xl;;
  * ) exit 
 esac

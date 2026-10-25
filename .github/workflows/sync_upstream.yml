@@ -1,0 +1,36 @@
+name: 晓林技术服务 - 自动同步上游并去水印定制
+
+on:
+  schedule:
+    # 每天北京时间早上 10:00 (UTC 02:00) 自动检查并同步上游更新
+    - cron: '0 2 * * *'
+  workflow_dispatch: # 支持在 GitHub 仓库 Actions 页面手动点击 "Run workflow" 随时触发
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-brand:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出当前仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 执行自动化上游抓取与晓林品牌定制
+        run: |
+          python3 scripts/brand_sb.py
+
+      - name: 检查并提交更新
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n $(git status -s sb.sh) ]]; then
+            git add sb.sh
+            git commit -m "chore(sync): 自动同步上游最新代码并注入晓林专属品牌标识"
+            git push origin main
+            echo "🎉 已成功同步上游并推送到仓库！"
+          else
+            echo "✨ 当前版本已是最新，无须更新。"
+          fi
