@@ -11,11 +11,15 @@ wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/mai
 ```
 ### 或者 国内镜像加速版
 ```
-wget -4 -O /usr/bin/vps https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
+wget -O /usr/bin/vps https://ghproxy.net/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 ```
 ```
 wget -4 -O /usr/bin/vps https://gh-proxy.com/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 ```
+```
+wget -4 -O /usr/bin/vps https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
+```
+
 
 
 
