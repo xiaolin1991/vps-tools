@@ -16,15 +16,15 @@ wget -O /usr/bin/vps https://raw.githubusercontent.com/xiaolin1991/vps-tools/mai
 
 ##### 🇨🇳 国内镜像极速通道（推荐国内 VPS，任选其一）：
 
-# 通道一（推荐）
+### 通道一（推荐）
 ```
 wget -4 -O /usr/bin/vps https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 ```
-# 通道二
+### 通道二
 ```
 wget -4 -O /usr/bin/vps https://gh-proxy.com/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 ```
-# 通道三
+### 通道三
 ```
 wget -O /usr/bin/vps https://ghproxy.net/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh && chmod +x /usr/bin/vps && vps
 ```
