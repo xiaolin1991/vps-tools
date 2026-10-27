@@ -1,37 +1,37 @@
 #!/bin/bash
 
 # ==============================================================================
-# 晓林技术 - 亚马逊电商 VPS 网络极限加速与防关联管理面板 (旗舰专业版 v7.4)
-# 针对场景: 中国本土卖家 (如杭州/深圳等国内同城IP防视频验证) & 多账号“一号一IP”隔离运营
+# 晓林技术支持 (XIAOLIN TECH) - 亚马逊电商 VPS 极速网络与防关联管理面板 (旗舰版 v7.5)
+# 适用场景: 中国本土卖家 (如杭州/深圳等国内同城IP防视频验证) & 多账号“一号一IP”隔离运营
 #           亚马逊卖家中心 / 美国广告后台 (advertising.amazon.com) / 商品图片CDN 秒开加速
 #
-# v7.4 核心升级日志 (基于真机抓包日志 4 大痛点靶向根治):
-#   1. [彻底消灭指纹浏览器后台连 Google 导致的 SYN-SENT 阻塞卡死]:
-#      - 抓包铁证: 指纹浏览器打开亚马逊时后台并发连接 content-autofill.googleapis.com
-#        (172.217.x.x / 108.177.x.x)，在国内 VPS 上形成大量 SYN-SENT 死连接堵死代理线程！
-#      - 根治方案: dnsmasq 0ms 秒拒谷歌后台遥测域名 + iptables 对 Google 黑洞网段直接返回
-#        TCP RST (0.001ms 瞬间断开)，彻底清空 SYN-SENT 阻塞，释放 100% 代理并发性能！
-#   2. [卖家中心与广告后台全面改用真实动态业务路径 (/gp/homepage.html) 测速与巡检]:
-#      - 废除失真的 /favicon.ico 静态图标测速，改用真实动态后台路径 /gp/homepage.html (返回 302)，
-#        既绕开首页 503 防爬盾，又 100% 测出节点回源美国亚马逊主机的真实速度 (如 0.71s)！
-#   3. [彻底移除定时任务 (Cron)，100% 交由实时故障自愈守护 (amazon-failover) 按需切换]:
-#      - 删除所有 10/20/30/60 分钟定时重测逻辑，锁死好节点后绝不乱动；仅当 amazon-failover
-#        检测到某个域名真实连接超时或动态响应慢 (>3.5秒) 时，才单独秒级热切换该故障域名！
-#   4. [彻底根治商品图片 CDN (images-na.ssl-images-amazon.com) 命中 18.65.15.143 超时问题]:
-#      - 直采 Akamai e3758 权威通道与高可用边缘池，强制实测官方 1x1 像素真实图片
-#        (transparent-pixel.gif) 通过 TLS 握手 + HTTP 200 后 100% 锁死，绝不再回退动态污染解析！
+# v7.5 品牌UI升级与底层 Bug 全面修复日志:
+#   1. [全新设计“晓林技术支持”高对比度品牌仪表盘 UI]:
+#      - 针对深色 SSH 终端 (Xshell/FinalShell) 将原先看不清的暗紫/暗蓝替换为高亮色彩；
+#      - 顶部集成【晓林技术支持】专属品牌横幅与 5 大核心指标实时状态仪表盘；
+#      - 菜单采用 4 大分区 + [01]~[14] 对齐徽章设计，同时支持输入 1 或 01 触发。
+#   2. [修复 Bug 1：并发锁与原子替换，根除后台守护与前台优选互相抢占冲突]:
+#      - 引入 /tmp/amazon_opt.lock 进程互斥锁与 .tmp 临时文件原子替换 (mv -f)，防止
+#        amazon-failover 在手动优选期间误判配置为空而并发启动第二个优选进程。
+#   3. [修复 Bug 2：内置代理引擎自动热更新 + 代理层直读锁定 IP 与 0ms 拦截 Google]:
+#      - 修复此前 /usr/bin/gost 存在即跳过更新的问题；新版代理引擎在内存层直接读取
+#        锁定的亚马逊冠军 IP (彻底绕过 glibc 缓存滞后) 并在代理内部 0ms 秒拒 Google 域名/IP。
+#   4. [修复 Bug 3：修复 Linux 下 0.0.0.0 回环连接本机 127.0.0.1:443 的隐患]:
+#      - 改用专用黑洞地址 127.255.255.254 配合 iptables TCP-RST 0.001ms 瞬断。
+#   5. [修复 Bug 4：清理 dnsmasq 诊断日志膨胀隐患 + 测速自愈后当场自动重测展示结果]。
 # ==============================================================================
 
-SCRIPT_VERSION="v7.4"
+SCRIPT_VERSION="v7.5"
 
-# 定义颜色
-export RED='\033[0;31m'
-export GREEN='\033[0;32m'
-export YELLOW='\033[0;33m'
-export BLUE='\033[0;34m'
-export PURPLE='\033[0;35m'
-export CYAN='\033[0;36m'
+# 高对比度亮色定义 (彻底解决深色终端下暗紫/暗蓝字迹看不清的问题)
+export RED='\033[1;31m'
+export GREEN='\033[1;32m'
+export YELLOW='\033[1;33m'
+export BLUE='\033[1;36m'
+export PURPLE='\033[1;35m'
+export CYAN='\033[1;36m'
 export WHITE='\033[1;37m'
+export GRAY='\033[0;37m'
 export NC='\033[0m'
 
 CONFIG_FILE="/etc/vps_proxy.conf"
@@ -44,8 +44,10 @@ FAILOVER_SERVICE="/etc/systemd/system/amazon-failover.service"
 AUTO_OPT_LOG="/var/log/amazon_auto_dns.log"
 AUTO_OPT_CONF="/etc/amazon_auto_opt.conf"
 TUNING_SERVICE="/etc/systemd/system/amazon-net-tuning.service"
+OPT_LOCK_FILE="/tmp/amazon_opt.lock"
+CACHED_PUBLIC_IP=""
 
-# 亚马逊全球商品图片 CDN 真实 1x1 像素探针路径 (确保 100% 校验真实图片 TLS 握手与 HTTP 200)
+# 亚马逊全球商品图片 CDN 真实 1x1 像素探针路径
 IMAGE_PROBE_PATH="/images/G/01/x-locale/common/transparent-pixel._V192234675_.gif"
 
 # 精选 15 大国内直连高连通率跨国骨干与本土 DNS 采集池
@@ -77,7 +79,7 @@ AMAZON_AUTH_DNS_POOL=(
     "156.154.65.10|Amazon-UltraDNS本家权威-2"
 )
 
-# 6 大核心亚马逊业务模块定义 (包含从真机日志抓出的卖家中心微前端 CDN 与后台子接口)
+# 6 大核心亚马逊业务模块定义
 DOMAIN_GROUPS=(
     "sellercentral.amazon.com|1. 亚马逊北美卖家中心 (Seller Central)|sellercentral.amazon.com,sellercentral.amazon.ca,sellercentral.amazon.com.mx,sellercentral-europe.amazon.com"
     "advertising.amazon.com|2. 亚马逊广告管理中心 (Advertising)|advertising.amazon.com,advertising.amazon.ca,advertising.amazon.com.mx,advertising-api.amazon.com,na.account.amazon.com,fls-na.amazon.com,unagi-na.amazon.com,unagi.amazon.com,unagi-fe.amazon.com,trms-na.amazon.com"
@@ -101,12 +103,16 @@ EMERGENCY_DNS_EOF
     fi
 }
 
-# 彻底清理旧版遗留的 Crontab 定时任务 (防止定时任务乱换已经很快的节点)
+# 彻底清理旧版遗留的 Crontab 定时任务与临时诊断日志
 purge_legacy_cron() {
     if command -v crontab >/dev/null 2>&1; then
-        crontab -l 2>/dev/null | grep -v "$AUTO_OPT_SCRIPT" | grep -v "amazon-dns-prewarm" | grep -v "\-\-auto-optimize" | crontab - 2>/dev/null
+        local cur_cron
+        cur_cron=$(crontab -l 2>/dev/null)
+        if echo "$cur_cron" | grep -qE "amazon-auto-optimizer|amazon-dns-prewarm|--auto-optimize"; then
+            echo "$cur_cron" | grep -vE "amazon-auto-optimizer|amazon-dns-prewarm|--auto-optimize" | crontab - 2>/dev/null
+        fi
     fi
-    rm -f "$AUTO_OPT_SCRIPT" "$AUTO_OPT_CONF" /usr/local/bin/amazon-dns-prewarm.sh 2>/dev/null
+    rm -f "$AUTO_OPT_SCRIPT" "$AUTO_OPT_CONF" /usr/local/bin/amazon-dns-prewarm.sh /var/log/dnsmasq_amz.log 2>/dev/null
 }
 
 # 自动同步快捷指令 vps
@@ -121,8 +127,12 @@ sync_shortcut() {
     fi
 }
 
-# 获取公网 IPv4
+# 获取公网 IPv4 (支持内存级缓存，避免每次刷新主菜单卡顿)
 get_public_ip() {
+    if [ -n "$CACHED_PUBLIC_IP" ] && [ "$1" != "force" ]; then
+        echo "$CACHED_PUBLIC_IP"
+        return 0
+    fi
     local ip=""
     local urls=(
         "https://myip.ipip.net/s"
@@ -135,12 +145,14 @@ get_public_ip() {
     for url in "${urls[@]}"; do
         ip=$(curl -s -4 --max-time 2 "$url" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
         if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            CACHED_PUBLIC_IP="$ip"
             echo "$ip"
             return 0
         fi
     done
     ip=$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]; exit}')
     [ -z "$ip" ] && ip="0.0.0.0"
+    CACHED_PUBLIC_IP="$ip"
     echo "$ip"
 }
 
@@ -170,6 +182,15 @@ load_proxy_config() {
         [ -n "$c_user" ] && PROXY_USER="$c_user"
         [ -n "$c_pass" ] && PROXY_PASS="$c_pass"
     fi
+}
+
+# 晓林技术支持 - 通用品牌头部打印函数
+print_brand_banner() {
+    local sub_title="${1:-亚马逊跨境电商专属 VPS 极速网络与防关联系统}"
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}        ${YELLOW}★ 晓 林 技 术 支 持  ·  XIAOLIN TECH SUPPORT (${SCRIPT_VERSION}) ★${NC}             ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}        ${WHITE}${sub_title}${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
 }
 
 # 1. 极限内核网络调优 (BBR + 64MB BDP缓冲 + 关闭 IPv6 防 10 秒 DNS 超时)
@@ -227,7 +248,7 @@ optimize_kernel() {
 
     cat << 'SYSCTL_EOF' >> /etc/sysctl.conf
 
-# === 晓林技术 网络性能与跨境电商加速优化 v7.4 ===
+# === 晓林技术 网络性能与跨境电商加速优化 v7.5 ===
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fastopen = 3
@@ -404,8 +425,7 @@ DNSMASQ_UNIT_EOF
 setup_dns_accelerator() {
     echo -e "${YELLOW}>>> [3/6] 正在部署本地 dnsmasq 内存加速引擎 + 拦截浏览器后台 Google 死连接...${NC}"
 
-    rm -f "$FASTROUTE_CONF" /etc/dnsmasq.d/amazon_dns_pool.conf /etc/dnsmasq.d/amazon_ad_slim.conf 2>/dev/null
-    sed -i '/# === AMZ_FAST_HOSTS_START ===/,/# === AMZ_FAST_HOSTS_END ===/d' /etc/hosts 2>/dev/null
+    rm -f "$FASTROUTE_CONF" /etc/dnsmasq.d/amazon_dns_pool.conf /etc/dnsmasq.d/amazon_ad_slim.conf /var/log/dnsmasq_amz.log 2>/dev/null
 
     chattr -i /etc/resolv.conf >/dev/null 2>&1
     rm -f /etc/resolv.conf 2>/dev/null
@@ -427,6 +447,7 @@ BOOTSTRAP_DNS_EOF
     fi
 
     mkdir -p /etc/dnsmasq.d
+    # 使用 127.255.255.254 配合 iptables TCP-RST 瞬断，避免 0.0.0.0 在 Linux 下回环访问本机 127.0.0.1:443
     cat << 'DNSMASQ_HEAD_EOF' > "$SPEED_CONF"
 listen-address=127.0.0.1
 bind-interfaces
@@ -442,22 +463,22 @@ server=223.5.5.5
 server=114.114.114.114
 server=119.29.29.29
 
-# === 拦截 Chromium 指纹浏览器后台自动连 Google 导致的 SYN-SENT 阻塞 (0ms 秒拒) ===
-address=/googleapis.com/0.0.0.0
-address=/content-autofill.googleapis.com/0.0.0.0
-address=/optimizationguide-pa.googleapis.com/0.0.0.0
-address=/safebrowsing.googleapis.com/0.0.0.0
-address=/clientservices.googleapis.com/0.0.0.0
-address=/update.googleapis.com/0.0.0.0
-address=/clients1.google.com/0.0.0.0
-address=/clients2.google.com/0.0.0.0
-address=/clients3.google.com/0.0.0.0
-address=/clients4.google.com/0.0.0.0
-address=/clients5.google.com/0.0.0.0
-address=/clients6.google.com/0.0.0.0
-address=/gstatic.com/0.0.0.0
-address=/gvt1.com/0.0.0.0
-address=/gvt2.com/0.0.0.0
+# === 拦截 Chromium 指纹浏览器后台自动连 Google 导致的 SYN-SENT 阻塞 (0ms 瞬断) ===
+address=/googleapis.com/127.255.255.254
+address=/content-autofill.googleapis.com/127.255.255.254
+address=/optimizationguide-pa.googleapis.com/127.255.255.254
+address=/safebrowsing.googleapis.com/127.255.255.254
+address=/clientservices.googleapis.com/127.255.255.254
+address=/update.googleapis.com/127.255.255.254
+address=/clients1.google.com/127.255.255.254
+address=/clients2.google.com/127.255.255.254
+address=/clients3.google.com/127.255.255.254
+address=/clients4.google.com/127.255.255.254
+address=/clients5.google.com/127.255.255.254
+address=/clients6.google.com/127.255.255.254
+address=/gstatic.com/127.255.255.254
+address=/gvt1.com/127.255.255.254
+address=/gvt2.com/127.255.255.254
 DNSMASQ_HEAD_EOF
 
     if dnsmasq --help 2>&1 | grep -q "filter-AAAA"; then
@@ -476,7 +497,7 @@ options timeout:1 attempts:1 single-request-reopen
 RESOLV_EOF
 
     if systemctl is-active --quiet dnsmasq || pgrep -x dnsmasq >/dev/null 2>&1; then
-        echo -e "${GREEN}>>> [成功] dnsmasq 内存加速与 Google 死连接 0ms 秒拒规则已在 127.0.0.1:53 生效！${NC}"
+        echo -e "${GREEN}>>> [成功] dnsmasq 内存加速与 Google 死连接 0ms 瞬断规则已在 127.0.0.1:53 生效！${NC}"
     else
         echo -e "${RED}>>> [警告] dnsmasq 启动异常，将在第 [6/6] 步触发深度修复！${NC}"
     fi
@@ -494,7 +515,7 @@ rebuild_hosts_from_domain_conf() {
                 h_block="${h_block}${ip} ${dom}\n"
             fi
         done < "$DOMAIN_DNS_CONF"
-        h_block="${h_block}0.0.0.0 content-autofill.googleapis.com\n0.0.0.0 optimizationguide-pa.googleapis.com\n0.0.0.0 safebrowsing.googleapis.com\n0.0.0.0 update.googleapis.com\n0.0.0.0 clients2.google.com\n# === AMZ_FAST_HOSTS_END ==="
+        h_block="${h_block}127.255.255.254 content-autofill.googleapis.com\n127.255.255.254 optimizationguide-pa.googleapis.com\n127.255.255.254 safebrowsing.googleapis.com\n127.255.255.254 update.googleapis.com\n127.255.255.254 clients2.google.com\n# === AMZ_FAST_HOSTS_END ==="
         echo -e "$h_block" >> /etc/hosts
     fi
     if pgrep -x dnsmasq >/dev/null 2>&1; then
@@ -505,7 +526,7 @@ rebuild_hosts_from_domain_conf() {
 }
 
 # ==============================================================================
-# 4. 【v7.4 终极三步闭环优选法】(真实动态业务路径测速 + Akamai官方图片节点锁定)
+# 4. 【v7.5 终极三步闭环优选法】(带进程互斥锁 + .tmp 原子切换 + 真实动态路径测速)
 #    参数1: verbose | silent
 #    参数2: 可选，指定仅刷新某一个故障域名 (例如 sellercentral.amazon.com)
 # ==============================================================================
@@ -513,11 +534,19 @@ optimize_per_domain_dns() {
     local silent_mode="${1:-verbose}"
     local target_only_dom="${2:-}"
 
+    # 进程互斥锁：防止后台 amazon-failover 与手动优选同时并发执行造成配置冲突
+    if [ -f "$OPT_LOCK_FILE" ]; then
+        local lock_pid
+        lock_pid=$(cat "$OPT_LOCK_FILE" 2>/dev/null)
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+            [ "$silent_mode" != "silent" ] && echo -e "${YELLOW}>>> 检测到另一个优选任务正在运行 (PID: ${lock_pid})，请稍候...${NC}"
+            return 0
+        fi
+    fi
+    echo "$$" > "$OPT_LOCK_FILE"
+
     if [ -z "$target_only_dom" ]; then
         [ "$silent_mode" != "silent" ] && echo -e "${YELLOW}>>> [4/6] 正在执行【采集真实命中节点 -> 真实动态业务路径测速 -> 100%锁死冠军IP】...${NC}"
-        rm -f "$FASTROUTE_CONF" "$DOMAIN_DNS_CONF" 2>/dev/null
-        sed -i '/# === AMZ_FAST_HOSTS_START ===/,/# === AMZ_FAST_HOSTS_END ===/d' /etc/hosts 2>/dev/null
-        repair_and_start_dnsmasq >/dev/null 2>&1
     fi
 
     # 筛出当前连通的活跃公共 DNS 池
@@ -557,9 +586,12 @@ optimize_per_domain_dns() {
     fi
 
     mkdir -p /etc/dnsmasq.d
-    if [ -z "$target_only_dom" ] || [ ! -f "$DOMAIN_DNS_CONF" ]; then
-        cat << CONF_HEAD_EOF > "$DOMAIN_DNS_CONF"
-# 晓林技术 v7.4 - 亚马逊各域名专属命中 IP 极速锁定表 (更新时间: $(date '+%Y-%m-%d %H:%M:%S'))
+    local work_conf="${DOMAIN_DNS_CONF}.tmp.$$"
+    if [ -n "$target_only_dom" ] && [ -f "$DOMAIN_DNS_CONF" ]; then
+        cp -f "$DOMAIN_DNS_CONF" "$work_conf" 2>/dev/null
+    else
+        cat << CONF_HEAD_EOF > "$work_conf"
+# 晓林技术支持 v7.5 - 亚马逊各域名专属命中 IP 极速锁定表 (更新时间: $(date '+%Y-%m-%d %H:%M:%S'))
 # 核心逻辑: 真实动态后台路径 (/gp/homepage.html) 与真实图片探针测速 -> 100%锁死冠军IP！
 CONF_HEAD_EOF
     fi
@@ -576,9 +608,6 @@ CONF_HEAD_EOF
         [ "$silent_mode" != "silent" ] && echo -e "\n${CYAN}  ======================================================================${NC}"
         [ "$silent_mode" != "silent" ] && echo -e "  ${YELLOW}● 正在采集并测速【${grp_title}】(${WHITE}${test_dom}${YELLOW}) 的真实命中节点:${NC}"
 
-        # ----------------------------------------------------------------------
-        # 第一步：并发向【亚马逊本家权威 DNS】+【15大跨国/国内骨干 DNS】查询该域名所有真实命中 IP
-        # ----------------------------------------------------------------------
         local tmp_collect_dir="/tmp/amz_col_${test_dom}_$$"
         mkdir -p "$tmp_collect_dir"
         local c_idx=0
@@ -623,7 +652,6 @@ CONF_HEAD_EOF
             ) &
         done
 
-        # 为商品图片 CDN 额外注入经过您杭州 VPS 实测验证的高速 Akamai 官方证书节点池 (防止国内 DNS 全返回 SNI 阻断的 18.65.15.143)
         if [ "$test_dom" == "images-na.ssl-images-amazon.com" ]; then
             cat << 'AK_SEED_EOF' > "${tmp_collect_dir}/ak_seed"
 23.217.66.142|117.50.10.10|Akamai-亚太极速官方节点-1
@@ -634,7 +662,6 @@ CONF_HEAD_EOF
 AK_SEED_EOF
         fi
 
-        # 为卖家中心额外注入您刚刚实测 0.71s 的 3.173.254.69 与 3.173.238.x 官方边缘节点作为保底比拼池
         if [ "$test_dom" == "sellercentral.amazon.com" ]; then
             cat << 'SC_SEED_EOF' > "${tmp_collect_dir}/sc_seed"
 3.173.254.69|223.5.5.5|CloudFront-卖家中心极速节点-1
@@ -647,7 +674,6 @@ SC_SEED_EOF
 
         wait
 
-        # 对采集到的命中 IP 进行去重
         local unique_hit_ips=()
         local seen_hit_ips=()
         if ls "${tmp_collect_dir}"/* >/dev/null 2>&1; then
@@ -665,12 +691,6 @@ SC_SEED_EOF
         fi
         rm -rf "$tmp_collect_dir"
 
-        # ----------------------------------------------------------------------
-        # 第二步：采用【真实业务路径】逐个测速 (告别不准的静态小图标)
-        #   - 卖家中心: 使用真实动态登录网关路径 /gp/homepage.html (返回 302，100% 反映回源美国真实耗时！)
-        #   - 广告后台: 使用真实门户路径 / (返回 200，100% 反映广告后台真实耗时！)
-        #   - 商品图片: 使用真实 1x1 像素透明图片路径 (返回 200，强制校验 SSL 握手！)
-        # ----------------------------------------------------------------------
         local probe_path="/favicon.ico"
         if [ "$test_dom" == "sellercentral.amazon.com" ]; then
             probe_path="/gp/homepage.html"
@@ -702,12 +722,11 @@ SC_SEED_EOF
                 IFS='|' read -r h_code t_tcp t_ssl t_tot ssl_err <<< "$curl_out"
 
                 local ms_tcp ms_ssl ms_tot
-                ms_tcp=$(awk "BEGIN {printf \"%.0f\", $t_tcp * 1000}")
-                ms_ssl=$(awk "BEGIN {printf \"%.0f\", $t_ssl * 1000}")
-                ms_tot=$(awk "BEGIN {printf \"%.0f\", $t_tot * 1000}")
+                ms_tcp=$(awk "BEGIN {printf \"%.0f\", ${t_tcp:-0} * 1000}")
+                ms_ssl=$(awk "BEGIN {printf \"%.0f\", ${t_ssl:-0} * 1000}")
+                ms_tot=$(awk "BEGIN {printf \"%.0f\", ${t_tot:-0} * 1000}")
                 [ -z "$ssl_err" ] && ssl_err="1"
 
-                # 严格要求所有节点完成 TLS 加密握手 (ms_ssl > 0) 且 SSL 证书 100% 合法匹配 (ssl_err == 0)
                 if [[ "$h_code" =~ ^(200|202|204|301|302|307|400|403|404|405)$ ]] && [ "$ms_ssl" -gt 0 ] && [ "$ssl_err" == "0" ] && [ "$ms_tot" -lt 3800 ]; then
                     local score=$((ms_ssl + ms_tot))
                     printf "OK|%06d|%s|%s|%s|%s|%s|%s|%s\n" "$score" "$res_ip" "$dns_ip" "$dns_name" "$h_code" "$ms_tcp" "$ms_ssl" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
@@ -743,7 +762,6 @@ SC_SEED_EOF
         fi
         rm -rf "$tmp_dom_dir"
 
-        # 针对商品图片 CDN，万一本轮全部被限流未选出，使用您实测 253ms 的 Akamai 亚太极速节点 23.217.66.142 保底锁定，绝不落回被阻断的 18.65.15.143！
         if [ -z "$best_res_ip" ] && [ "$test_dom" == "images-na.ssl-images-amazon.com" ]; then
             best_res_ip="23.217.66.142"
             best_dns_ip="117.50.10.10"
@@ -751,11 +769,8 @@ SC_SEED_EOF
             best_tot_ms="250ms"
         fi
 
-        # ----------------------------------------------------------------------
-        # 第三步：将该域名精准锁定到实测第 1 名的冠军命中 IP
-        # ----------------------------------------------------------------------
-        if [ -n "$target_only_dom" ] && [ -f "$DOMAIN_DNS_CONF" ]; then
-            sed -i "/# === BEGIN_${test_dom} ===/,/# === END_${test_dom} ===/d" "$DOMAIN_DNS_CONF" 2>/dev/null
+        if [ -n "$target_only_dom" ] && [ -f "$work_conf" ]; then
+            sed -i "/# === BEGIN_${test_dom} ===/,/# === END_${test_dom} ===/d" "$work_conf" 2>/dev/null
         fi
 
         {
@@ -780,7 +795,7 @@ SC_SEED_EOF
                 done
             fi
             echo "# === END_${test_dom} ==="
-        } >> "$DOMAIN_DNS_CONF"
+        } >> "$work_conf"
 
         if [ -n "$best_res_ip" ]; then
             [ "$silent_mode" != "silent" ] && echo -e "    ${YELLOW}★ 最终锁定最快命中节点:${NC} 【${WHITE}${test_dom}${NC}】 ===> 100% 锁定至极速节点 ${GREEN}${best_res_ip}${NC} (真实耗时: ${best_tot_ms}, 来源: ${best_dns_name})"
@@ -788,7 +803,10 @@ SC_SEED_EOF
         fi
     done
 
+    # 原子替换配置文件，确保优选期间无断流
+    mv -f "$work_conf" "$DOMAIN_DNS_CONF" 2>/dev/null
     rebuild_hosts_from_domain_conf
+    rm -f "$OPT_LOCK_FILE" 2>/dev/null
 
     local log_tag="全量命中节点锁定完成"
     [ -n "$target_only_dom" ] && log_tag="[故障自愈秒级切换] 域名 ${target_only_dom} 已自动更换新节点"
@@ -804,12 +822,7 @@ SC_SEED_EOF
 }
 
 # ==============================================================================
-# 【核心模块】页面打不开/节点变慢 秒级自动故障切换守护服务 (amazon-failover.service)
-# 升级点：
-#   1. 彻底取代定时任务：平时锁定的极速节点只要健康且快 (<3.5s)，绝不乱换！
-#   2. 监测真实动态业务路径 (/gp/homepage.html 与广告门户 /)：一旦发现连接超时 (HTTP=000)、
-#      处于 SYN_SENT 卡死、或者真实动态响应变慢 (>3.5秒)，立即在 2~3 秒内仅针对该故障域名
-#      重新测速并热切换至新的第 1 名节点！
+# 页面打不开/节点变慢 秒级自动故障切换守护服务 (amazon-failover.service)
 # ==============================================================================
 install_failover_guardian() {
     echo -e "${YELLOW}>>> 正在部署【真实动态路径监控 + 页面卡死 3 秒自动故障切换守护 (amazon-failover)】...${NC}"
@@ -820,10 +833,10 @@ install_failover_guardian() {
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 DOMAIN_DNS_CONF="/etc/dnsmasq.d/amazon_domain_dns.conf"
+OPT_LOCK_FILE="/tmp/amazon_opt.lock"
 IMAGE_PROBE_PATH="/images/G/01/x-locale/common/transparent-pixel._V192234675_.gif"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-# 使用真实动态路径监控 (卖家中心监控 /gp/homepage.html，广告监控 /，图片监控真实 1x1 像素图)
 check_Domains=(
     "sellercentral.amazon.com|/gp/homepage.html|3500"
     "advertising.amazon.com|/|3800"
@@ -836,6 +849,17 @@ check_Domains=(
 declare -A fail_counts
 
 while true; do
+    # 如果前台正在执行手动优选 (存在活跃锁)，跳过本轮巡检以防冲突
+    if [ -f "$OPT_LOCK_FILE" ]; then
+        lock_pid=$(cat "$OPT_LOCK_FILE" 2>/dev/null)
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+            sleep 5
+            continue
+        else
+            rm -f "$OPT_LOCK_FILE" 2>/dev/null
+        fi
+    fi
+
     if [ -f "$DOMAIN_DNS_CONF" ] && [ -f /usr/bin/vps ]; then
         syn_stuck_ips=$(ss -tn state syn-sent 2>/dev/null | awk 'NR>1 {print $4}' | cut -d':' -f1 | sort -u)
 
@@ -843,7 +867,6 @@ while true; do
             IFS='|' read -r dom path max_ms <<< "$item"
             locked_ip=$(grep -E "^address=/${dom}/" "$DOMAIN_DNS_CONF" 2>/dev/null | head -n 1 | awk -F'/' '{print $3}')
             if [ -z "$locked_ip" ]; then
-                # 如果某个域名尚未锁定静态 IP (例如处于动态模式)，立即为其测速锁定一个极速 IP！
                 /bin/bash /usr/bin/vps --failover-domain "$dom" >/dev/null 2>&1
                 continue
             fi
@@ -861,7 +884,6 @@ while true; do
             ms_ssl=$(awk "BEGIN {printf \"%.0f\", ${tssl:-0} * 1000}")
             ms_tot=$(awk "BEGIN {printf \"%.0f\", ${ttot:-0} * 1000}")
 
-            # 判定故障：连接超时 (HTTP=000)、SSL 握手失败、证书不匹配、或真实动态响应超过阈值 max_ms
             if [ "$hcode" == "000" ] || [ "$ms_ssl" -le 0 ] || [ "${serr:-1}" != "0" ] || [ "$ms_tot" -gt "$max_ms" ]; then
                 fail_counts["$dom"]=$(( ${fail_counts["$dom"]:-0} + 1 ))
                 if [ "$need_switch" -eq 1 ] || [ "${fail_counts["$dom"]}" -ge 2 ]; then
@@ -899,49 +921,47 @@ SERVICE_FAILOVER_EOF
     echo -e "${GREEN}>>> [成功] 真实动态路径监控与秒级故障自愈守护服务 (amazon-failover) 已激活！${NC}"
 }
 
-# 菜单 [3]: 按域名命中节点测速锁定与实时秒级故障自愈中心 (已彻底移除定时任务设置)
+# 菜单 [03]: 按域名命中节点测速锁定与实时秒级故障自愈中心
 auto_dns_optimizer_menu() {
     clear
     purge_legacy_cron
-    local failover_status="${RED}未开启${NC}"
+    local failover_status="${RED}○ 未开启${NC}"
     if systemctl is-active --quiet amazon-failover; then
         failover_status="${GREEN}● 实时守护中 (平时保持最快节点不动，仅在页面打不开或响应 >3.5s 时秒级换新)${NC}"
     fi
 
-    echo -e "${YELLOW}========================================================================${NC}"
-    echo -e "${GREEN}   【亚马逊各域名命中节点测速锁定与秒级故障自愈中心 (v7.4 无定时干扰版)】 ${NC}"
-    echo -e "${YELLOW}========================================================================${NC}"
-    echo -e "核心策略：已彻底移除会导致速度波动的定时重测任务！平时 100% 锁死极速节点不动，"
-    echo -e "          仅当后台守护检测到某个域名连接超时或动态页变慢 (>3.5秒) 时自动换节点！"
-    echo -e "${CYAN}------------------------------------------------------------------------${NC}"
+    print_brand_banner "亚马逊各域名命中节点测速锁定与秒级故障自愈中心 (无定时重测干扰)"
+    echo -e " 核心策略：已彻底移除会导致速度波动的定时重测任务！平时 100% 锁死极速节点不动，"
+    echo -e "           仅当后台守护检测到某个域名连接超时或动态页变慢 (>3.5秒) 时自动换节点！"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
     echo -e " 秒级故障自愈守护 : ${failover_status}"
     echo -e " 最近一次切换记录 : ${WHITE}$(tail -n 1 "$AUTO_OPT_LOG" 2>/dev/null || echo '暂无记录')${NC}"
-    echo -e "${CYAN}------------------------------------------------------------------------${NC}"
-    echo -e " 1. ${GREEN}立即执行【全量采集 6 大域名命中节点 + 真实动态路径测速 + 锁定最快IP】${NC}"
-    echo -e " 2. 单独重新测速并切换【1. 亚马逊北美卖家中心 (sellercentral)】节点"
-    echo -e " 3. 单独重新测速并切换【2. 亚马逊广告管理中心 (advertising)】节点"
-    echo -e " 4. 单独重新测速并切换【6. 亚马逊全球商品图片 (images-na)】节点"
-    echo -e " 5. 查看节点锁定与秒级故障自愈历史日志"
-    echo -e " 6. 开启 / 重启【页面卡死秒级自动故障切换守护 (amazon-failover)】"
-    echo -e " 7. ${RED}停止【页面卡死秒级自动故障切换守护】${NC}"
-    echo -e " 0. 返回主菜单"
-    echo -e "${YELLOW}========================================================================${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN}[1]${NC} ${GREEN}立即执行【全量采集 6 大域名命中节点 + 真实动态路径测速 + 锁定最快IP】${NC}"
+    echo -e "  ${CYAN}[2]${NC} 单独重新测速并切换【1. 亚马逊北美卖家中心 (sellercentral)】节点"
+    echo -e "  ${CYAN}[3]${NC} 单独重新测速并切换【2. 亚马逊广告管理中心 (advertising)】节点"
+    echo -e "  ${CYAN}[4]${NC} 单独重新测速并切换【6. 亚马逊全球商品图片 (images-na)】节点"
+    echo -e "  ${YELLOW}[5]${NC} 查看节点锁定与秒级故障自愈历史日志"
+    echo -e "  ${GREEN}[6]${NC} 开启 / 重启【页面卡死秒级自动故障切换守护 (amazon-failover)】"
+    echo -e "  ${RED}[7]${NC} 停止【页面卡死秒级自动故障切换守护】"
+    echo -e "  ${WHITE}[0]${NC} 返回主菜单"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
     read -p "请输入选项 [0-7]: " ao_opt
     case "$ao_opt" in
-        1)
+        1|01)
             setup_dns_accelerator
             optimize_per_domain_dns "verbose"
             ;;
-        2)
+        2|02)
             optimize_per_domain_dns "verbose" "sellercentral.amazon.com"
             ;;
-        3)
+        3|03)
             optimize_per_domain_dns "verbose" "advertising.amazon.com"
             ;;
-        4)
+        4|04)
             optimize_per_domain_dns "verbose" "images-na.ssl-images-amazon.com"
             ;;
-        5)
+        5|05)
             echo -e "\n${CYAN}================ 节点锁定与秒级故障自愈日志 (最近 25 条) ================${NC}"
             if [ -f "$AUTO_OPT_LOG" ]; then
                 tail -n 25 "$AUTO_OPT_LOG"
@@ -950,10 +970,10 @@ auto_dns_optimizer_menu() {
             fi
             echo -e "${CYAN}=========================================================================${NC}"
             ;;
-        6)
+        6|06)
             install_failover_guardian
             ;;
-        7)
+        7|07)
             systemctl stop amazon-failover.service >/dev/null 2>&1
             systemctl disable amazon-failover.service >/dev/null 2>&1
             echo -e "${YELLOW}>>> 已停止后台秒级故障切换守护。当前锁定的节点将永久保持不变。${NC}"
@@ -989,6 +1009,10 @@ protect_bandwidth_and_harden() {
         iptables -I OUTPUT 1 -p udp --dport "$mp" -j DROP >/dev/null 2>&1
     done
 
+    # 对专用瞬断地址 127.255.255.254 返回 TCP RST (0.001ms 瞬间断开，绝不等待超时)
+    iptables -D OUTPUT -d 127.255.255.254 -p tcp -j REJECT --reject-with tcp-reset >/dev/null 2>&1
+    iptables -I OUTPUT 1 -d 127.255.255.254 -p tcp -j REJECT --reject-with tcp-reset >/dev/null 2>&1
+
     local country
     country=$(get_vps_country)
     if [ "$country" == "CN" ]; then
@@ -996,8 +1020,7 @@ protect_bandwidth_and_harden() {
             timedatectl set-timezone Asia/Shanghai >/dev/null 2>&1
             timedatectl set-ntp true >/dev/null 2>&1
         fi
-        # 【关键根治】：对指纹浏览器硬编码直连的 Google 黑洞 IP 段 (如抓包发现的 172.217.x.x、108.177.x.x、142.250.x.x)
-        # 直接由内核返回 TCP RST (0.001ms 瞬间断开)，彻底消灭 python3 代理进程中的 SYN-SENT 死等连接！
+        # 对指纹浏览器硬编码直连的 Google 黑洞 IP 段直接返回 TCP RST (0.001ms 瞬间断开)
         local google_blackhole_cidrs=(
             "172.217.0.0/16"
             "108.177.0.0/17"
@@ -1014,7 +1037,7 @@ protect_bandwidth_and_harden() {
     echo -e "${GREEN}>>> 2M 带宽保护、Google SYN-SENT 0ms 瞬断、WebRTC 阻断与北京时间同步已生效！${NC}"
 }
 
-# 6. 全组件运行状态强制自检、警告告知与自动修复重装引擎 (5 大核心组件，无定时任务)
+# 6. 全组件运行状态强制自检、警告告知与自动修复重装引擎
 verify_and_repair_all() {
     echo -e "\n${YELLOW}>>> [6/6] 正在执行全组件安装后自检与未启动项目自动重装修复...${NC}"
     purge_legacy_cron
@@ -1049,10 +1072,19 @@ verify_and_repair_all() {
     fi
 
     load_proxy_config
+    # 如果当前 /usr/bin/gost 是内置 Python3 引擎，确保同步升级为最新 v7.5 内存直读引擎
+    if [ -f /usr/bin/gost ] && head -n 2 /usr/bin/gost 2>/dev/null | grep -q "python3"; then
+        if ! grep -q "AMZ_DIRECT_MAP_V75" /usr/bin/gost 2>/dev/null; then
+            install_builtin_proxy_engine >/dev/null 2>&1
+            systemctl restart gost >/dev/null 2>&1
+            sleep 1
+        fi
+    fi
+
     if systemctl is-active --quiet gost && (ss -tlpn 2>/dev/null | grep -q ":${PROXY_PORT} " || netstat -tlpn 2>/dev/null | grep -q ":${PROXY_PORT} "); then
-        echo -e "    [自检 3/5] Gost 双协议代理服务: ${GREEN}● 正在运行 (监听端口: ${PROXY_PORT})${NC}"
+        echo -e "    [自检 3/5] 双协议代理服务核心 : ${GREEN}● 正在运行 (监听端口: ${PROXY_PORT})${NC}"
     else
-        echo -e "    [自检 3/5] Gost 双协议代理服务: ${RED}▲ 警告：检测到代理服务未运行！正在自动重装并启动...${NC}"
+        echo -e "    [自检 3/5] 双协议代理服务核心 : ${RED}▲ 警告：检测到代理服务未运行！正在自动重装并启动...${NC}"
         download_gost
         force_open_port "$PROXY_PORT"
         cat << SERVICE_EOF > /etc/systemd/system/gost.service
@@ -1078,7 +1110,7 @@ SERVICE_EOF
         systemctl restart gost >/dev/null 2>&1
         sleep 1
         if systemctl is-active --quiet gost; then
-            echo -e "               └─ 修复结果        : ${GREEN}✓ Gost 代理服务已成功启动 (端口: ${PROXY_PORT})！${NC}"
+            echo -e "               └─ 修复结果        : ${GREEN}✓ 代理服务已成功启动 (端口: ${PROXY_PORT})！${NC}"
         else
             echo -e "               └─ 切换内置引擎修复: ${YELLOW}正在启用内置 Python3 Asyncio 双协议引擎兜底...${NC}"
             rm -f /usr/bin/gost
@@ -1117,13 +1149,13 @@ SERVICE_EOF
     fi
 
     if [ $all_ok -eq 1 ]; then
-        echo -e "${GREEN}>>> [自检通过] 全套 5 大核心加速与实时故障自愈组件 100% 正常运行 (已彻底移除定时任务干扰)！${NC}"
+        echo -e "${GREEN}>>> [自检通过] 全套 5 大核心加速与实时故障自愈组件 100% 正常运行！${NC}"
     fi
 }
 
-# 内置高并发双协议 (Socks5 + HTTP CONNECT) 代理引擎生成函数
+# 内置高并发双协议 (Socks5 + HTTP CONNECT) 代理引擎生成函数 (v7.5 内存直读锁定IP + 0ms秒拒Google)
 install_builtin_proxy_engine() {
-    echo -e "${YELLOW}>>> 正在部署内置自研【高并发 Asyncio 双协议 (Socks5 & HTTP) 代理核心引擎】...${NC}"
+    echo -e "${YELLOW}>>> 正在部署内置自研【高并发 Asyncio 双协议代理核心 v7.5 (内存直读冠军IP + 秒拒Google)】...${NC}"
     if ! command -v python3 >/dev/null 2>&1; then
         ensure_working_dns
         apt-get update -y >/dev/null 2>&1 && apt-get install -y python3 >/dev/null 2>&1
@@ -1132,8 +1164,10 @@ install_builtin_proxy_engine() {
 
     cat << 'PYPROXY_EOF' > /usr/bin/gost
 #!/usr/bin/env python3
+# AMZ_DIRECT_MAP_V75
 import asyncio
 import base64
+import os
 import re
 import socket
 import struct
@@ -1151,6 +1185,62 @@ def parse_args():
 
 PROXY_USER, PROXY_PASS, PROXY_PORT = parse_args()
 EXPECTED_BASIC = base64.b64encode(f"{PROXY_USER}:{PROXY_PASS}".encode()).decode()
+
+DOMAIN_CONF = "/etc/dnsmasq.d/amazon_domain_dns.conf"
+_cached_mtime = 0.0
+_domain_map = {}
+
+# 被墙 Google 域名与网段黑名单 (在代理层 0.0001ms 直接秒拒，绝不产生 SYN-SENT 死连接)
+BLOCKED_SUFFIXES = (
+    "googleapis.com",
+    "gstatic.com",
+    "gvt1.com",
+    "gvt2.com",
+    "clients1.google.com",
+    "clients2.google.com",
+    "clients3.google.com",
+    "clients4.google.com",
+    "clients5.google.com",
+    "clients6.google.com",
+)
+BLOCKED_IP_PREFIXES = ("172.217.", "108.177.", "142.250.", "142.251.", "216.58.", "74.125.", "127.255.")
+
+def resolve_fast_host(host):
+    global _cached_mtime, _domain_map
+    h = host.lower().strip(".")
+    for suf in BLOCKED_SUFFIXES:
+        if h == suf or h.endswith("." + suf):
+            return None
+    for pfx in BLOCKED_IP_PREFIXES:
+        if h.startswith(pfx):
+            return None
+    try:
+        st = os.stat(DOMAIN_CONF)
+        if st.st_mtime != _cached_mtime:
+            new_map = {}
+            with open(DOMAIN_CONF, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("address=/"):
+                        parts = line.split("/")
+                        if len(parts) >= 3 and parts[1] and parts[2]:
+                            new_map[parts[1].lower()] = parts[2]
+            _domain_map = new_map
+            _cached_mtime = st.st_mtime
+    except Exception:
+        pass
+    if h in _domain_map:
+        return _domain_map[h]
+    for dom_k, ip_v in _domain_map.items():
+        if h.endswith("." + dom_k):
+            return ip_v
+    return host
+
+async def open_fast_connection(host, port):
+    real_host = resolve_fast_host(host)
+    if real_host is None:
+        raise ConnectionRefusedError("Blocked blackhole target")
+    return await asyncio.wait_for(asyncio.open_connection(real_host, port), timeout=6)
 
 async def pipe(reader, writer):
     try:
@@ -1223,7 +1313,7 @@ async def handle_socks5(first_byte, reader, writer):
 
     port = struct.unpack("!H", await reader.readexactly(2))[0]
     try:
-        rem_r, rem_w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=6)
+        rem_r, rem_w = await open_fast_connection(host, port)
         set_nodelay(rem_w)
         writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
         await writer.drain()
@@ -1270,7 +1360,7 @@ async def handle_http(first_byte, reader, writer):
         else:
             host, port = target, 443
         try:
-            rem_r, rem_w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=6)
+            rem_r, rem_w = await open_fast_connection(host, port)
             set_nodelay(rem_w)
             writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await writer.drain()
@@ -1288,7 +1378,7 @@ async def handle_http(first_byte, reader, writer):
         port = int(m.group(2)) if m.group(2) else 80
         path = m.group(3) or "/"
         try:
-            rem_r, rem_w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=6)
+            rem_r, rem_w = await open_fast_connection(host, port)
             set_nodelay(rem_w)
             new_lines = [f"{method} {path} {req_parts[2] if len(req_parts)>2 else 'HTTP/1.1'}"]
             for line in lines[1:]:
@@ -1326,14 +1416,18 @@ if __name__ == "__main__":
         pass
 PYPROXY_EOF
     chmod +x /usr/bin/gost
-    echo -e "${GREEN}>>> 内置高并发双协议代理核心 (Socks5 + HTTP) 部署成功！${NC}"
+    echo -e "${GREEN}>>> 内置高并发双协议代理核心 v7.5 (Socks5 + HTTP) 部署成功！${NC}"
     return 0
 }
 
 # 智能多镜像下载 Gost 组件
 download_gost() {
     if [ -f /usr/bin/gost ] && [ -x /usr/bin/gost ]; then
-        echo -e "${GREEN}检测到代理服务核心组件已安装，跳过下载。${NC}"
+        if head -n 2 /usr/bin/gost 2>/dev/null | grep -q "python3"; then
+            install_builtin_proxy_engine
+        else
+            echo -e "${GREEN}检测到代理服务核心组件已安装，跳过下载。${NC}"
+        fi
         return 0
     fi
 
@@ -1377,7 +1471,7 @@ download_gost() {
     done
 
     if [ $success -eq 0 ]; then
-        echo -e "${YELLOW}>>> 外部 GitHub 镜像连接受限，正在自动启用【内置自研双协议代理引擎】...${NC}"
+        echo -e "${YELLOW}>>> 外部 GitHub 镜像连接受限，正在自动启用【内置自研双协议代理引擎 v7.5】...${NC}"
         install_builtin_proxy_engine
         return 0
     fi
@@ -1429,11 +1523,11 @@ modify_config() {
     local rand_pass="Amz$(tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 8)"
     [ -z "$rand_pass" ] && rand_pass="Amz889966"
 
-    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
     echo -e "${YELLOW}请设置代理连接信息 (直接回车保留当前值):${NC}"
     echo -e "${PURPLE}★ 防关联安全提示: 建议使用复杂密码，防止被扫描器盗用您的杭州/国内专属 IP！${NC}"
     echo -e "  推荐随机安全端口: ${GREEN}${rand_port}${NC} | 推荐随机高强密码: ${GREEN}${rand_pass}${NC}"
-    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
 
     read -p "设置端口 [当前: $def_port]: " port
     port=${port:-$def_port}
@@ -1522,10 +1616,8 @@ query_proxy_info() {
         port_listen="${YELLOW}未检测到监听 (请确认服务是否已启动)${NC}"
     fi
 
-    echo -e "${YELLOW}==============================================================${NC}"
-    echo -e "${GREEN}           【Socks5 / HTTP 代理账户信息查询结果】             ${NC}"
-    echo -e "${YELLOW}==============================================================${NC}"
-    echo -e " 当前脚本版本 : ${GREEN}${SCRIPT_VERSION} (无定时重测干扰 · 纯故障触发自愈版)${NC}"
+    print_brand_banner "Socks5 / HTTP 双协议代理账户与指纹浏览器连接参数"
+    echo -e " 当前脚本版本 : ${GREEN}${SCRIPT_VERSION} (晓林技术支持 · 旗舰无干扰自愈版)${NC}"
     echo -e " 代理服务状态 : $is_running"
     echo -e " 智能DNS引擎  : $dnsmasq_state"
     echo -e " 秒级故障自愈 : $failover_state"
@@ -1535,21 +1627,21 @@ query_proxy_info() {
     echo -e " 代理连接端口 : ${GREEN}${port}${NC}"
     echo -e " 代理连接账号 : ${GREEN}${user}${NC}"
     echo -e " 代理连接密码 : ${GREEN}${pass}${NC}"
-    echo -e "${CYAN}--------------------------------------------------------------${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
     echo -e " 【指纹浏览器一键粘贴导入格式 (IP:端口:账号:密码)】:"
-    echo -e " ${GREEN}${ip}:${port}:${user}:${pass}${NC}"
-    echo -e "${CYAN}--------------------------------------------------------------${NC}"
-    echo -e "${YELLOW}★ 阿里云/华为云/腾讯云 入方向安全组放行要点:${NC}"
-    echo -e " 确保安全组【入方向规则】有: 协议=TCP, 端口=${port}, 授权对象=0.0.0.0/0"
-    echo -e "${YELLOW}==============================================================${NC}"
+    echo -e "  ${GREEN}${ip}:${port}:${user}:${pass}${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}★ 阿里云/华为云/腾讯云/移动云 入方向安全组放行要点:${NC}"
+    echo -e "  确保安全组【入方向规则】有: 协议=TCP, 端口=${port}, 授权对象=0.0.0.0/0"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
 }
 
 # 手动强开指定端口
 manual_force_open_port() {
     clear
-    echo -e "${YELLOW}================ 强行强开系统端口 ================${NC}"
-    echo -e "此功能将强行杀掉目标端口占用的进程，并在系统防火墙置顶放行！"
-    echo -e "${YELLOW}==================================================${NC}"
+    print_brand_banner "系统防火墙端口强开与冲突进程清理工具"
+    echo -e " 此功能将强行杀掉目标端口占用的冲突进程，并在系统防火墙置顶放行！"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
     read -p "请输入需要强行强开的端口 (例如 7878): " target_port
     if [ -n "$target_port" ]; then
         force_open_port "$target_port"
@@ -1563,14 +1655,17 @@ manual_force_open_port() {
     fi
 }
 
-# 亚马逊卖家中心 & 广告后台 & 商品图片CDN 毫秒级真实动态路径测速
+# 亚马逊卖家中心 & 广告后台 & 商品图片CDN 毫秒级真实动态路径测速 (带超时自动切换并当场重测)
 test_url_speed() {
     local target_url="$1"
     local desc_name="$2"
+    local retry_flag="${3:-0}"
     local ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-    echo -e "\n${CYAN}>>> 正在测试: ${WHITE}${desc_name}${NC}"
-    echo -e "    目标地址: ${BLUE}${target_url}${NC}"
+    if [ "$retry_flag" == "0" ]; then
+        echo -e "\n${CYAN}>>> 正在测试: ${WHITE}${desc_name}${NC}"
+        echo -e "    目标地址: ${CYAN}${target_url}${NC}"
+    fi
 
     local result
     result=$(curl -4 -s -o /dev/null -A "$ua" \
@@ -1579,30 +1674,30 @@ test_url_speed() {
         -w "%{http_code}|%{remote_ip}|%{time_namelookup}|%{time_connect}|%{time_appconnect}|%{time_starttransfer}|%{time_total}" \
         --connect-timeout 4 --max-time 8 "$target_url" 2>/dev/null)
 
-    if [ -z "$result" ]; then
-        echo -e "    状态检测: ${RED}连接超时或阻断 (建议执行菜单[3]重新优选)${NC}"
-        return 1
-    fi
-
     IFS='|' read -r http_code remote_ip t_dns t_tcp t_ssl t_ttfb t_total <<< "$result"
 
     local ms_dns ms_tcp ms_ssl ms_ttfb ms_total
-    ms_dns=$(awk "BEGIN {printf \"%.0f\", $t_dns * 1000}")
-    ms_tcp=$(awk "BEGIN {printf \"%.0f\", ($t_tcp - $t_dns) * 1000}")
-    ms_ssl=$(awk "BEGIN {printf \"%.0f\", ($t_ssl - $t_tcp) * 1000}")
-    ms_ttfb=$(awk "BEGIN {printf \"%.0f\", ($t_ttfb - $t_ssl) * 1000}")
-    ms_total=$(awk "BEGIN {printf \"%.0f\", $t_total * 1000}")
+    ms_dns=$(awk "BEGIN {printf \"%.0f\", ${t_dns:-0} * 1000}")
+    ms_tcp=$(awk "BEGIN {printf \"%.0f\", (${t_tcp:-0} - ${t_dns:-0}) * 1000}")
+    ms_ssl=$(awk "BEGIN {printf \"%.0f\", (${t_ssl:-0} - ${t_tcp:-0}) * 1000}")
+    ms_ttfb=$(awk "BEGIN {printf \"%.0f\", (${t_ttfb:-0} - ${t_ssl:-0}) * 1000}")
+    ms_total=$(awk "BEGIN {printf \"%.0f\", ${t_total:-0} * 1000}")
     [ "$ms_tcp" -lt 0 ] && ms_tcp=0
     [ "$ms_ssl" -lt 0 ] && ms_ssl=0
     [ "$ms_ttfb" -lt 0 ] && ms_ttfb=0
 
-    if [ "$http_code" == "000" ] || [ "$ms_ssl" -le 0 ]; then
-        echo -e "    状态检测: ${RED}节点 ${remote_ip:-未知} 响应超时，正在为您触发秒级自动切换新节点...${NC}"
-        local dom_extract
-        dom_extract=$(echo "$target_url" | awk -F'/' '{print $3}')
-        [ -n "$dom_extract" ] && optimize_per_domain_dns "silent" "$dom_extract"
-        echo -e "    自愈完成: ${GREEN}已为您自动切换该域名节点，请重新运行测速查看新节点表现！${NC}"
-        return 1
+    if [ -z "$result" ] || [ "$http_code" == "000" ] || [ "$ms_ssl" -le 0 ]; then
+        if [ "$retry_flag" == "0" ]; then
+            echo -e "    状态检测: ${YELLOW}节点 ${remote_ip:-未知} 响应异常，正在为您触发秒级自动切换并当场重测...${NC}"
+            local dom_extract
+            dom_extract=$(echo "$target_url" | awk -F'/' '{print $3}')
+            [ -n "$dom_extract" ] && optimize_per_domain_dns "silent" "$dom_extract"
+            test_url_speed "$target_url" "$desc_name" "1"
+            return $?
+        else
+            echo -e "    状态检测: ${RED}连接超时或阻断 (目标节点: ${remote_ip:-未知})${NC}"
+            return 1
+        fi
     fi
 
     local code_display="HTTP ${http_code}"
@@ -1620,7 +1715,7 @@ test_url_speed() {
     elif [ "$ms_total" -lt 3800 ]; then
         speed_rate="${YELLOW}良好 (正常)${NC}"
     else
-        speed_rate="${RED}偏慢 (建议在菜单[3]单独切换该域名节点)${NC}"
+        speed_rate="${RED}偏慢 (建议在菜单[03]单独切换该域名节点)${NC}"
     fi
 
     echo -e "    命中节点 : ${WHITE}${remote_ip}${NC} (${GREEN}${code_display}${NC})"
@@ -1630,12 +1725,9 @@ test_url_speed() {
 
 test_amazon_suite() {
     clear
-    echo -e "${YELLOW}======================================================================${NC}"
-    echo -e "${GREEN}   【亚马逊卖家中心 / 广告后台 / 商品图片 CDN 真实动态路径深度测速】   ${NC}"
-    echo -e "${YELLOW}======================================================================${NC}"
-    echo -e "正在对 7 大核心业务真实路径进行 DNS / TCP / SSL / TTFB 分段诊断..."
+    print_brand_banner "亚马逊卖家中心 / 广告后台 / 商品图片 CDN 真实动态路径深度测速"
+    echo -e " 正在对 7 大核心业务真实路径进行 DNS / TCP / SSL / TTFB 分段诊断..."
 
-    # 1. 卖家中心直接测试真实动态后台路径 /gp/homepage.html (不再测失真的 /favicon.ico)
     test_url_speed "https://sellercentral.amazon.com/gp/homepage.html" "1. 亚马逊北美卖家中心真实动态后台 (Seller Central Dynamic)"
     test_url_speed "https://advertising.amazon.com/" "2. 亚马逊广告门户首页 (Advertising Portal)"
     test_url_speed "https://advertising.amazon.com/campaign-manager/all-campaigns" "3. 亚马逊广告活动管理后台 (Campaign Manager)"
@@ -1657,10 +1749,8 @@ check_ip_association_risk() {
     local ip
     ip=$(get_public_ip)
 
-    echo -e "${YELLOW}======================================================================${NC}"
-    echo -e "${GREEN}   【VPS IP 纯净度体检与中国本土卖家“一号一IP”防关联深度评估 v7.4】   ${NC}"
-    echo -e "${YELLOW}======================================================================${NC}"
-    echo -e "正在检测 IP 归属地、城市一致性 (防视频验证)、智能 DNS 池及防泄露护盾...\n"
+    print_brand_banner "VPS IP 纯净度体检与中国本土卖家“一号一IP”防关联深度评估"
+    echo -e " 正在检测 IP 归属地、城市一致性 (防视频验证)、智能 DNS 池及防泄露护盾...\n"
 
     local info
     info=$(curl -s --max-time 8 "http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,regionName,city,timezone,isp,org,as,query,hosting,proxy" 2>/dev/null)
@@ -1681,7 +1771,7 @@ check_ip_association_risk() {
         is_proxy=$(echo "$info" | grep -o '"proxy":[^,}]*' | cut -d':' -f2 | tr -d ' ')
     fi
 
-    local webrtc_fw="${YELLOW}未开启服务端拦截 (建议执行菜单[2]一键开启)${NC}"
+    local webrtc_fw="${YELLOW}未开启服务端拦截 (建议执行菜单[02]一键开启)${NC}"
     if iptables -S OUTPUT 2>/dev/null | grep -q "3478"; then
         webrtc_fw="${GREEN}已开启服务端强制拦截 (UDP 3478/5349/19302-19309 已封禁)${NC}"
     fi
@@ -1689,44 +1779,43 @@ check_ip_association_risk() {
     local ipv6_dis
     ipv6_dis=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
     local ipv6_status="${GREEN}已彻底关闭 IPv6 (零泄露风险，杜绝 10秒 AAAA DNS 超时)${NC}"
-    [ "$ipv6_dis" != "1" ] && ipv6_status="${YELLOW}未完全关闭 (建议执行菜单[2]关闭)${NC}"
+    [ "$ipv6_dis" != "1" ] && ipv6_status="${YELLOW}未完全关闭 (建议执行菜单[02]关闭)${NC}"
 
-    echo -e "${CYAN}------------------- 【1. IP 基础物理与同城归属画像】 -------------------${NC}"
+    echo -e "${CYAN}─────────────────── 【1. IP 基础物理与同城归属画像】 ───────────────────${NC}"
     echo -e " 出口 IPv4 : ${WHITE}${ip}${NC}"
     echo -e " 物理位置  : ${GREEN}${country} - ${region} - ${city}${NC} (同城固定登录可有效预防异地视频验证)"
     echo -e " 标准时区  : ${WHITE}${tz}${NC} (当前系统时间: $(date '+%Y-%m-%d %H:%M:%S %Z'))"
     echo -e " 网络运营商: ${WHITE}${isp}${NC}"
     echo -e " 所属机构  : ${WHITE}${org} (${as_name})${NC}"
 
-    echo -e "\n${CYAN}------------------- 【2. 亚马逊防关联与环境纯净度诊断】 -------------------${NC}"
+    echo -e "\n${CYAN}─────────────────── 【2. 亚马逊防关联与环境纯净度诊断】 ───────────────────${NC}"
     echo -e " 黑名单标记  : $( [ "$is_proxy" == "true" ] && echo -e "${RED}已被标记为公开代理 (建议更换IP或开启白名单锁)${NC}" || echo -e "${GREEN}纯净 (未被标记为公开黑名单代理)${NC}" )"
     echo -e " 节点锁定策略: ${GREEN}已取消定时重测干扰 | 100%锁死冠军IP + 故障/超时3秒自动换新${NC}"
-    echo -e " Google防卡死: ${GREEN}已开启 googleapis/172.217.x.x 0ms 秒拒 (根除 SYN-SENT 阻塞)${NC}"
+    echo -e " Google防卡死: ${GREEN}已开启代理层与内核层 0ms 秒拒 (彻底根除 SYN-SENT 阻塞)${NC}"
     echo -e " IPv6 防卡顿 : $ipv6_status"
     echo -e " WebRTC 防护 : $webrtc_fw"
     echo -e " 店铺地域策略: $( [ "$cc" == "CN" ] && echo -e "${GREEN}中国本土卖家同城 IP 模式 (${city}) - 符合营业执照所在地常用登录特征${NC}" || echo -e "${CYAN}海外本土 IP 模式 (${country}-${city})${NC}" )"
-    echo -e "${RED}======================================================================${NC}"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
 }
 
 # 8. 代理安全防扫锁 & IP白名单管理
 security_lock_menu() {
     clear
     load_proxy_config
-    echo -e "${YELLOW}======================================================================${NC}"
-    echo -e "${GREEN}      【亚马逊专属 IP 纯净度护盾：代理端口防扫描与授权白名单管理】     ${NC}"
-    echo -e "${YELLOW}======================================================================${NC}"
-    echo -e "当前代理端口: ${GREEN}${PROXY_PORT}${NC}"
-    echo -e "1. ${GREEN}一键执行【服务端 WebRTC 拦截 + Google死连接秒拒 + 禁用IPv6】加固${NC}"
-    echo -e "2. ${CYAN}添加【专属客户端 IP 白名单】${NC} (仅允许你指定的公司/家里宽带 IP 连接代理端口)"
-    echo -e "3. ${YELLOW}清除白名单限制 (恢复允许所有 IP 凭账号密码连接)${NC}"
-    echo -e "0. 返回主菜单"
-    echo -e "${YELLOW}======================================================================${NC}"
+    print_brand_banner "亚马逊专属 IP 纯净度护盾：代理端口防扫描与授权白名单管理"
+    echo -e " 当前代理端口: ${GREEN}${PROXY_PORT}${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN}[1]${NC} ${GREEN}一键执行【服务端 WebRTC 拦截 + Google死连接秒拒 + 禁用IPv6】加固${NC}"
+    echo -e "  ${CYAN}[2]${NC} ${CYAN}添加【专属客户端 IP 白名单】${NC} (仅允许你指定的公司/家里宽带 IP 连接代理端口)"
+    echo -e "  ${YELLOW}[3]${NC} ${YELLOW}清除白名单限制 (恢复允许所有 IP 凭账号密码连接)${NC}"
+    echo -e "  ${WHITE}[0]${NC} 返回主菜单"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
     read -p "请输入选项 [0-3]: " s_opt
     case "$s_opt" in
-        1)
+        1|01)
             protect_bandwidth_and_harden
             ;;
-        2)
+        2|02)
             local ssh_client_ip
             ssh_client_ip=$(echo "$SSH_CLIENT" | awk '{print $1}')
             echo -e "检测到您当前 SSH 登录的本地宽带公网 IP 为: ${GREEN}${ssh_client_ip:-未知}${NC}"
@@ -1741,7 +1830,7 @@ security_lock_menu() {
                 echo -e "${RED}IP 格式无效！${NC}"
             fi
             ;;
-        3)
+        3|03)
             while iptables -D INPUT -p tcp --dport "$PROXY_PORT" -j DROP >/dev/null 2>&1; do :; done
             force_open_port "$PROXY_PORT"
             echo -e "${GREEN}>>> 已恢复允许所有 IP 凭账号密码连接端口 ${PROXY_PORT}！${NC}"
@@ -1757,24 +1846,22 @@ security_lock_menu() {
 # ==============================================================================
 self_update_script() {
     clear
-    echo -e "${YELLOW}========================================================================${NC}"
-    echo -e "${GREEN}         【一键在线更新脚本最新版本 (GitHub 多镜像防缓存极速拉取)】       ${NC}"
-    echo -e "${YELLOW}========================================================================${NC}"
-    echo -e " 当前本地版本 : ${CYAN}${SCRIPT_VERSION}${NC}"
+    print_brand_banner "一键在线更新脚本最新版本 (GitHub 多镜像防缓存极速拉取)"
+    echo -e " 当前本地版本 : ${GREEN}${SCRIPT_VERSION}${NC}"
     echo -e " 默认仓库地址 : ${WHITE}https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh${NC}"
-    echo -e "${CYAN}------------------------------------------------------------------------${NC}"
-    echo -e " 1. ${GREEN}立即从默认 GitHub 仓库多镜像拉取最新 amazon.sh 并自动应用升级${NC}"
-    echo -e " 2. 输入自定义脚本直链 URL 进行在线更新"
-    echo -e " 0. 返回主菜单"
-    echo -e "${YELLOW}========================================================================${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN}[1]${NC} ${GREEN}立即从默认 GitHub 仓库多镜像拉取最新 amazon.sh 并自动应用升级${NC}"
+    echo -e "  ${CYAN}[2]${NC} 输入自定义脚本直链 URL 进行在线更新"
+    echo -e "  ${WHITE}[0]${NC} 返回主菜单"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
     read -p "请输入选项 [0-2]: " up_opt
 
     local raw_target="https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/amazon.sh"
-    if [ "$up_opt" == "2" ]; then
+    if [ "$up_opt" == "2" ] || [ "$up_opt" == "02" ]; then
         read -p "请输入自定义脚本直链 URL: " custom_url
         [ -z "$custom_url" ] && echo -e "${RED}未输入地址，已取消！${NC}" && return 1
         raw_target="$custom_url"
-    elif [ "$up_opt" != "1" ]; then
+    elif [ "$up_opt" != "1" ] && [ "$up_opt" != "01" ]; then
         return 0
     fi
 
@@ -1843,6 +1930,7 @@ self_update_script() {
 # 全自动一键部署
 install_all() {
     clear
+    print_brand_banner "全自动一键极速部署 (晓林技术支持 · 旗舰版)"
     ensure_working_dns
     purge_legacy_cron
     optimize_kernel
@@ -1856,12 +1944,10 @@ install_all() {
     fi
 }
 
-# 单独一键无损极速升级 v7.4
+# 单独一键无损极速升级 v7.5
 optimize_suite_only() {
     clear
-    echo -e "${YELLOW}========================================================================${NC}"
-    echo -e "${GREEN}  正在执行: v7.4 秒拒Google死连接 + 真实动态路径测速 + 移除定时任务干扰  ${NC}"
-    echo -e "${YELLOW}========================================================================${NC}"
+    print_brand_banner "正在执行 v7.5 无损极速升级 (保留原有代理端口与账号密码)"
     ensure_working_dns
     purge_legacy_cron
     optimize_kernel
@@ -1872,50 +1958,50 @@ optimize_suite_only() {
     install_failover_guardian
     verify_and_repair_all
 
-    echo -e "\n${GREEN}========================================================================${NC}"
-    echo -e "${GREEN}  恭喜！v7.4 旗舰版已全部生效 (原有端口密码不变)！                       ${NC}"
-    echo -e "${GREEN}  1. 已彻底移除定时重测任务，平时锁死最快节点绝不乱换                    ${NC}"
-    echo -e "${GREEN}  2. 已对 Google 黑洞网段启用 0ms TCP RST 秒拒，彻底消除 SYN-SENT 阻塞   ${NC}"
-    echo -e "${GREEN}  3. 卖家中心已改用真实动态路径 (/gp/homepage.html) 测速与秒级故障监控   ${NC}"
-    echo -e "${GREEN}  4. 商品图片 CDN 已注入 Akamai 亚太极速官方节点并强制真实图片校验       ${NC}"
-    echo -e "${GREEN}========================================================================${NC}"
+    echo -e "\n${GREEN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║  恭喜！晓林技术支持 ${SCRIPT_VERSION} 旗舰版已全部生效 (原有端口密码不变)！         ║${NC}"
+    echo -e "${GREEN}║  1. 已移除定时任务干扰，引入互斥锁与原子切换，平时锁死最快节点绝不乱动   ║${NC}"
+    echo -e "${GREEN}║  2. 代理层与内核层双重 0ms 秒拒 Google 黑洞连接，彻底根除 SYN-SENT 阻塞  ║${NC}"
+    echo -e "${GREEN}║  3. 代理核心已支持内存直读锁定冠军 IP，卖家中心与图片 CDN 秒级直达       ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
 }
 
 # 查看系统与网络状态
 check_status() {
     clear
-    echo -e "${YELLOW}================ 当前系统与全组件健康度状态排查 (${SCRIPT_VERSION}) ================${NC}"
+    print_brand_banner "当前系统与全组件健康度状态排查"
     verify_and_repair_all
 
     if [ -f "$DOMAIN_DNS_CONF" ]; then
-        echo -e "\n${CYAN}---------------- 当前各亚马逊域名已 100% 锁定的最快命中节点 ----------------${NC}"
+        echo -e "\n${CYAN}──────────────── 当前各亚马逊域名已 100% 锁定的最快命中节点 ────────────────${NC}"
         grep "^# [1-6]\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
     fi
-    echo -e "${YELLOW}=======================================================================${NC}"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
 }
 
 # 服务控制
 manage_service() {
     clear
-    echo -e "${YELLOW}=== 服务运行控制与深度自检修复 ===${NC}"
-    echo -e "1. 一键运行【全组件健康自检与未启动项目自动重装修复】"
-    echo -e "2. 重启代理服务 (gost)"
-    echo -e "3. 重新采集各域名命中节点并测速锁定最快 IP"
-    echo -e "4. 重启秒级故障切换守护服务 (amazon-failover)"
-    echo -e "5. 停止代理服务"
-    echo -e "6. 开启代理服务"
-    echo -e "0. 返回主菜单"
+    print_brand_banner "服务运行控制与深度自检修复中心"
+    echo -e "  ${GREEN}[1]${NC} 一键运行【全组件健康自检与未启动项目自动重装修复】"
+    echo -e "  ${CYAN}[2]${NC} 重启代理服务 (gost)"
+    echo -e "  ${CYAN}[3]${NC} 重新采集各域名命中节点并测速锁定最快 IP"
+    echo -e "  ${CYAN}[4]${NC} 重启秒级故障切换守护服务 (amazon-failover)"
+    echo -e "  ${YELLOW}[5]${NC} 停止代理服务"
+    echo -e "  ${GREEN}[6]${NC} 开启代理服务"
+    echo -e "  ${WHITE}[0]${NC} 返回主菜单"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
     read -p "请输入选项: " opt
     case "$opt" in
-        1) verify_and_repair_all ;;
-        2) systemctl restart gost && echo -e "${GREEN}代理服务已重启${NC}" ;;
-        3)
+        1|01) verify_and_repair_all ;;
+        2|02) systemctl restart gost && echo -e "${GREEN}代理服务已重启${NC}" ;;
+        3|03)
             repair_and_start_dnsmasq
             optimize_per_domain_dns "verbose"
             ;;
-        4) systemctl restart amazon-failover && echo -e "${GREEN}秒级故障切换守护已重启${NC}" ;;
-        5) systemctl stop gost && echo -e "${YELLOW}代理服务已停止${NC}" ;;
-        6) systemctl start gost && echo -e "${GREEN}代理服务已启动${NC}" ;;
+        4|04) systemctl restart amazon-failover && echo -e "${GREEN}秒级故障切换守护已重启${NC}" ;;
+        5|05) systemctl stop gost && echo -e "${YELLOW}代理服务已停止${NC}" ;;
+        6|06) systemctl start gost && echo -e "${GREEN}代理服务已启动${NC}" ;;
         *) return 0 ;;
     esac
     sleep 1
@@ -1924,6 +2010,7 @@ manage_service() {
 # 彻底卸载与还原
 uninstall_all() {
     clear
+    print_brand_banner "安全卸载代理服务并还原系统默认网络"
     echo -e "${RED}正在彻底卸载代理服务并安全还原系统 DNS 与网络环境...${NC}"
     systemctl stop gost >/dev/null 2>&1
     systemctl disable gost >/dev/null 2>&1
@@ -1940,7 +2027,7 @@ uninstall_all() {
     sed -i '/# === AMZ_FAST_HOSTS_START ===/,/# === AMZ_FAST_HOSTS_END ===/d' /etc/hosts 2>/dev/null
 
     rm -f /etc/systemd/system/gost.service /etc/systemd/system/dnsmasq.service "$TUNING_SERVICE" "$FAILOVER_SERVICE"
-    rm -f /usr/bin/gost "$FAILOVER_SCRIPT"
+    rm -f /usr/bin/gost "$FAILOVER_SCRIPT" "$OPT_LOCK_FILE"
     rm -f "$SPEED_CONF" "$DOMAIN_DNS_CONF" "$FASTROUTE_CONF" /etc/dnsmasq.d/amazon_dns_pool.conf /etc/dnsmasq.d/amazon_ad_slim.conf
     rm -f "$CONFIG_FILE" "$AUTO_OPT_LOG"
     rm -f /usr/bin/vps
@@ -1990,52 +2077,76 @@ elif [ "$1" == "--upgrade-now" ]; then
     read -p "按回车键进入主菜单..." dummy
 fi
 
-# 主菜单
+# 主菜单 - 晓林技术支持 旗舰品牌仪表盘
 main_menu() {
     sync_shortcut
+    get_public_ip >/dev/null 2>&1
     while true; do
         clear
-        echo -e "${YELLOW}========================================================================${NC}"
-        echo -e "${GREEN}   晓林技术 - 亚马逊命中节点测速锁定与防关联管理面板 (旗舰版 ${SCRIPT_VERSION})      ${NC}"
-        echo -e "${YELLOW}========================================================================${NC}"
-        echo -e " 1. ${GREEN}一键全自动部署 (秒拒Google死连接 + 真实动态路径测速 + 锁死最快IP)${NC}"
-        echo -e " 2. ${CYAN}【一键无损应用 v7.4 配置】(移除定时干扰 | 秒拒Google阻塞 | 修复图片CDN)${NC}"
-        echo -e " 3. ${GREEN}【按域名命中节点测速锁定与秒级故障自愈中心】(已移除定时任务干扰)${NC}"
-        echo -e " 4. 修改 代理端口 / 账号 / 密码 (自动强开系统端口)"
-        echo -e " 5. 【查询当前代理信息】(Socks5/HTTP 账号密码与指纹浏览器一键导入格式)"
-        echo -e " 6. 【强行强开系统端口】(暴力释放占用 + 穿透系统防火墙)"
-        echo -e " 7. ${PURPLE}【亚马逊卖家中心 / 广告后台 / 商品图片CDN 专项测速】(真实动态路径诊断)${NC}"
-        echo -e " 8. ${RED}【VPS IP 纯净度体检与中国本土同城IP防关联评估】(防视频验证/防泄露)${NC}"
-        echo -e " 9. ${YELLOW}【专属 IP 防盗刷护盾】(客户端 IP 白名单锁 / WebRTC与垃圾端口拦截)${NC}"
-        echo -e "10. 【全组件状态自检与自动重装修复】(检查并修复 5 大核心组件)"
-        echo -e "11. 停止 / 开启 / 重启服务 (gost / dnsmasq / amazon-failover)"
-        echo -e "12. 查看实时运行日志"
-        echo -e "13. ${RED}彻底卸载 (清除服务 + 自动恢复可用DNS，绝不断网)${NC}"
-        echo -e "14. ${GREEN}【一键在线更新脚本最新版本】(从 GitHub 多镜像极速拉取最新代码)${NC}"
-        echo -e " 0. 退出面板"
-        echo -e "${YELLOW}========================================================================${NC}"
+        load_proxy_config
+        local st_proxy="${RED}○未启动${NC}"
+        systemctl is-active --quiet gost && st_proxy="${GREEN}●运行中(${PROXY_PORT})${NC}"
+
+        local st_dns="${RED}○未启动${NC}"
+        (systemctl is-active --quiet dnsmasq || pgrep -x dnsmasq >/dev/null 2>&1) && st_dns="${GREEN}●0ms极速锁定${NC}"
+
+        local st_failover="${RED}○未启动${NC}"
+        systemctl is-active --quiet amazon-failover && st_failover="${GREEN}●3秒自愈守护${NC}"
+
+        local st_bbr="${YELLOW}○未开启${NC}"
+        [ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" == "bbr" ] && st_bbr="${GREEN}●BBR已开启${NC}"
+
+        echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║${NC}      ${YELLOW}★ 晓 林 技 术 支 持  ·  XIAOLIN TECH SUPPORT (旗舰版 ${SCRIPT_VERSION}) ★${NC}        ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}    ${WHITE}亚马逊跨境电商专属 VPS 极速网络 · 命中节点锁定 · 一号一IP防关联系统${NC}   ${CYAN}║${NC}"
+        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${CYAN}║${NC} 出口IP: ${WHITE}${CACHED_PUBLIC_IP:-获取中}${NC} | 代理: ${st_proxy} | DNS: ${st_dns} | 自愈: ${st_failover} ${CYAN}║${NC}"
+        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【一、核心部署与无损升级】${NC}                                               ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[01]${NC} ${GREEN}一键全自动极速部署${NC} ${WHITE}(采集权威DNS + 秒拒Google阻塞 + 锁死最快IP)${NC}     ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${CYAN}[02]${NC} ${CYAN}一键无损应用 ${SCRIPT_VERSION} 最新配置${NC} ${WHITE}(保留原端口密码 | 升级内存直读代理核心)${NC} ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[14]${NC} ${GREEN}一键在线更新脚本最新版本${NC} ${WHITE}(从 GitHub 多镜像防缓存极速拉取最新代码)${NC}  ${CYAN}║${NC}"
+        echo -e "${CYAN}╟──────────────────────────────────────────────────────────────────────────╢${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【二、亚马逊节点优选与全链路毫秒级测速】${NC}                                 ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[03]${NC} ${GREEN}按域名命中节点测速锁定与秒级故障自愈中心${NC} ${WHITE}(已彻底移除定时任务干扰)${NC}  ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${YELLOW}[07]${NC} ${YELLOW}亚马逊卖家中心 / 广告后台 / 商品图片CDN 专项测速${NC} ${WHITE}(真实动态路径诊断)${NC}${CYAN}║${NC}"
+        echo -e "${CYAN}╟──────────────────────────────────────────────────────────────────────────╢${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【三、代理账号管理与“一号一IP”防关联安全护盾】${NC}                           ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[04]${NC} 修改 代理端口 / 账号 / 密码 ${GRAY}(自动清理冲突并强开系统防火墙端口)${NC}     ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${CYAN}[05]${NC} ${CYAN}查询当前代理信息${NC} ${WHITE}(Socks5/HTTP 账号密码与指纹浏览器一键导入格式)${NC}    ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[06]${NC} 强行强开系统端口 ${GRAY}(暴力释放占用进程 + 穿透系统防火墙置顶放行)${NC}       ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[08]${NC} ${GREEN}VPS IP 纯净度体检与本土同城 IP 防关联评估${NC} ${WHITE}(防视频验证 / 防泄露)${NC}    ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${YELLOW}[09]${NC} ${YELLOW}专属 IP 防盗刷护盾${NC} ${WHITE}(客户端宽带 IP 白名单锁 / WebRTC与垃圾端口拦截)${NC} ${CYAN}║${NC}"
+        echo -e "${CYAN}╟──────────────────────────────────────────────────────────────────────────╢${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【四、系统自检维护与安全卸载还原】${NC}                                       ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${CYAN}[10]${NC} 全组件状态自检与自动重装修复 ${GRAY}(检查并修复 5 大核心加速组件)${NC}         ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[11]${NC} 停止 / 开启 / 重启服务 ${GRAY}(gost / dnsmasq / amazon-failover)${NC}          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[12]${NC} 查看实时运行日志 ${GRAY}(按 Ctrl+C 退出日志模式)${NC}                          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${RED}[13]${NC} ${RED}彻底安全卸载${NC} ${WHITE}(清除所有加速服务 + 自动恢复可用DNS，100%绝不断网)${NC}    ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[00]${NC} 退出管理面板 ${GRAY}(快捷呼出命令: vps | 技术支持: 晓林技术)${NC}              ${CYAN}║${NC}"
+        echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
         read -p "请输入数字选择 [0-14]: " num
 
         case "$num" in
-            1) install_all ;;
-            2) optimize_suite_only ;;
-            3) auto_dns_optimizer_menu ;;
-            4) modify_config ;;
-            5) query_proxy_info ;;
-            6) manual_force_open_port ;;
-            7) test_amazon_suite ;;
-            8) check_ip_association_risk ;;
-            9) security_lock_menu ;;
+            1|01) install_all ;;
+            2|02) optimize_suite_only ;;
+            3|03) auto_dns_optimizer_menu ;;
+            4|04) modify_config ;;
+            5|05) query_proxy_info ;;
+            6|06) manual_force_open_port ;;
+            7|07) test_amazon_suite ;;
+            8|08) check_ip_association_risk ;;
+            9|09) security_lock_menu ;;
             10) check_status ;;
             11) manage_service ;;
             12) view_logs ;;
             13) uninstall_all ;;
             14) self_update_script ;;
-            0) exit 0 ;;
+            0|00) exit 0 ;;
             *) echo -e "${RED}输入错误，请输入 0-14 之间的数字！${NC}" && sleep 1 && continue ;;
         esac
         echo ""
-        read -p "按回车键返回主菜单..." dummy
+        read -p "按回车键返回【晓林技术支持】主菜单..." dummy
     done
 }
 
