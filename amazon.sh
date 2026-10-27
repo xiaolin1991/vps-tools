@@ -1,26 +1,26 @@
 #!/bin/bash
 
 # ==============================================================================
-# 晓林技术 - 亚马逊电商 VPS 网络极限加速与防关联管理面板 (旗舰专业版 v7.0)
+# 晓林技术 - 亚马逊电商 VPS 网络极限加速与防关联管理面板 (旗舰专业版 v7.1)
 # 针对场景: 中国本土卖家 (如杭州/深圳等国内同城IP防视频验证) & 多账号“一号一IP”隔离运营
 #           亚马逊卖家中心 / 美国广告后台 (advertising.amazon.com) / 商品图片CDN 秒开加速
 #
-# v7.0 终极核心突破 (基于实测诊断数据量身打造):
-#   1. [按域名独立优选最佳 DNS 池 (Per-Domain Dynamic DNS Routing)]:
-#      - 彻底废除写死固定 IP (避免跨域名借用 IP 导致 SSL 证书不匹配 ERR=1 报错)！
-#      - 内置涵盖国内外 10 大高连通率 DNS 池 (4.2.2.1 / 4.2.2.2 / 168.95.1.1 /
-#        114.114.114.114 / 114.114.115.115 / 180.184.1.1 / 180.184.2.2 / 223.5.5.5 /
-#        119.29.29.29 / 117.50.10.10)。
-#      - 针对【卖家中心】【广告后台】【前端静态库】【商品图片CDN】【主站前台】每个域名分别
-#        向 DNS 池发起实时解析与真机 HTTPS 测速，在屏幕完整打印每个域名在各 DNS 下的真实速度
-#        排行榜，自动剔除 HTTP 503 报错与 5秒超时 DNS，将每个域名动态指向当下最快的 DNS
-#        (server=/域名/当下最快DNS)，绝不写死固定对应关系！
-#   2. [彻底解决 Ubuntu 系统 "Unit dnsmasq.service could not be found" 未启动顽疾]:
-#      - 实测发现阿里云/华为云 Ubuntu 镜像预装了 /usr/sbin/dnsmasq 二进制文件 (dnsmasq-base)，
-#        但缺失 systemd 服务单元文件导致启动失败。v7.0 自动检测并自建标准
-#        /etc/systemd/system/dnsmasq.service 服务单元，确保 dnsmasq 100% 秒级启动！
-#   3. [全组件安装后强制自检、警告告知与自动修复重装引擎]:
-#      - 每次部署/升级后逐项检查 dig、dnsmasq、gost、cron、BBR，任何一项未跑起来立即告警并自动修复！
+# v7.1 核心逻辑升级 (彻底解决 DNS 轮询跳 IP 导致优选后仍命中死节点的问题):
+#   1. [三步闭环优选法：先采集域名专属命中IP -> 对命中IP去重真机测速 -> 直接锁死冠军IP]:
+#      - 痛点修复: 在 v7.0 中仅绑定了 DNS 服务器 (server=/域名/DNS)，但由于亚马逊 CDN 在
+#        同一个 DNS 上每秒随机轮询返回不同 IP，导致优选时测出的是快 IP (如 3.173.238.45)，
+#        实际访问时 DNS 却随机返回了死节点 (如 13.249.231.89) 造成超时！
+#      - v7.1 完美闭环逻辑:
+#        第一步【广泛采集专属命中IP】: 针对卖家中心、广告后台、静态库、竞价引擎、商品图片、
+#                主站 6 大域名，分别通过 11 大 DNS 采集该域名自身当前可解析出的所有真实节点 IP
+#                并自动去重 (确保 100% 是该域名自己的正版证书节点，绝不跨域名乱借 IP)；
+#        第二步【针对命中IP逐一真机测速】: 直接对采集到的这批命中 IP 逐个发起 HTTPS 握手与
+#                首字节测速，屏幕完整打印每个命中 IP 的真实速度排行榜，自动剔除 503 与超时节点；
+#        第三步【直接锁定冠军命中IP】: 将该域名测速第 1 名的极速命中 IP 直接写入 dnsmasq
+#                (address=/域名/冠军IP) 与系统 /etc/hosts！确保后续每次访问 100% 稳定命中
+#                这个最快的节点 (DNS 耗时降至 0~1ms)，绝不再随机跳回死节点！
+#   2. [定时动态刷新]: 后台每 10/20 分钟自动重新采集各域名最新命中 IP 并测速更新锁定的冠军 IP。
+#   3. [全组件自检自愈]: 自动构建 dnsmasq.service 单元，5 大组件安装后强制检查与自动修复。
 # ==============================================================================
 
 # 定义颜色
@@ -42,22 +42,19 @@ AUTO_OPT_LOG="/var/log/amazon_auto_dns.log"
 AUTO_OPT_CONF="/etc/amazon_auto_opt.conf"
 TUNING_SERVICE="/etc/systemd/system/amazon-net-tuning.service"
 
-# ==============================================================================
-# 全球 + 国内高连通率智能 DNS 候选池 (实测在杭州/国内云主机可直连，不寫死对应关系)
-# 格式: "DNS_IP|名称说明"
-# ==============================================================================
+# 11 大高连通率智能 DNS 采集池 (用于广泛搜集每个亚马逊域名当前分配的所有边缘节点 IP)
 GLOBAL_DNS_POOL=(
-    "4.2.2.1|Level3-美国国际骨干DNS-1"
-    "4.2.2.2|Level3-美国国际骨干DNS-2"
-    "168.95.1.1|HiNet-亚太中华电信国际DNS"
-    "114.114.114.114|114DNS-电信国际出口主节点"
-    "114.114.115.115|114DNS-电信国际出口备节点"
-    "180.184.1.1|字节火山引擎-边缘极速DNS-1"
-    "180.184.2.2|字节火山引擎-边缘极速DNS-2"
-    "223.5.5.5|阿里云-杭州Anycast公共DNS-1"
-    "223.6.6.6|阿里云-杭州Anycast公共DNS-2"
-    "119.29.29.29|腾讯云-DNSPod公共DNS"
-    "117.50.10.10|OneDNS-国内纯净公共DNS"
+    "4.2.2.1|Level3-美国骨干DNS-1"
+    "4.2.2.2|Level3-美国骨干DNS-2"
+    "168.95.1.1|HiNet-亚太国际DNS"
+    "114.114.114.114|114DNS-电信国际主"
+    "114.114.115.115|114DNS-电信国际备"
+    "180.184.1.1|字节火山-边缘DNS-1"
+    "180.184.2.2|字节火山-边缘DNS-2"
+    "223.5.5.5|阿里云-杭州Anycast-1"
+    "223.6.6.6|阿里云-杭州Anycast-2"
+    "119.29.29.29|腾讯云-DNSPod"
+    "117.50.10.10|OneDNS-纯净节点"
 )
 
 # 【核心防断网自愈函数】确保任何时刻 VPS 都具备基础域名解析能力
@@ -191,7 +188,7 @@ optimize_kernel() {
 
     cat << 'SYSCTL_EOF' >> /etc/sysctl.conf
 
-# === 晓林技术 网络性能与跨境电商加速优化 v7.0 ===
+# === 晓林技术 网络性能与跨境电商加速优化 v7.1 ===
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fastopen = 3
@@ -299,24 +296,18 @@ TUNING_EOF
     echo -e "${GREEN}>>> 默认路由 initcwnd 32 / initrwnd 32 与 TCP MSS 钳制已激活！${NC}"
 }
 
-# ==============================================================================
 # 深度修复并启动 dnsmasq 的专项函数
-# 彻底解决您机器上 "Unit dnsmasq.service could not be found" 的根本原因！
-# ==============================================================================
 repair_and_start_dnsmasq() {
-    # 1. 停止并屏蔽 systemd-resolved 及其 socket 激活器 (防止自动复活抢占 53 端口)
     systemctl stop systemd-resolved.socket systemd-resolved.service >/dev/null 2>&1
     systemctl disable systemd-resolved.socket systemd-resolved.service >/dev/null 2>&1
     systemctl mask systemd-resolved.socket systemd-resolved.service >/dev/null 2>&1
 
-    # 2. 清理所有现有的 dnsmasq 或残留 53 端口占用进程
     killall -9 dnsmasq >/dev/null 2>&1
     if command -v fuser >/dev/null 2>&1; then
         fuser -k -9 53/udp >/dev/null 2>&1
         fuser -k -9 53/tcp >/dev/null 2>&1
     fi
 
-    # 3. 若连 /usr/sbin/dnsmasq 二进制文件都不存在，则调用包管理器安装
     if [ ! -x /usr/sbin/dnsmasq ] && ! command -v dnsmasq >/dev/null 2>&1; then
         echo -e "${YELLOW}    [自检修复] 正在通过软件源安装 dnsmasq 核心程序...${NC}"
         ensure_working_dns
@@ -333,8 +324,6 @@ repair_and_start_dnsmasq() {
         fi
     fi
 
-    # 4. 【核心修复】针对 Ubuntu 预装了 /usr/sbin/dnsmasq (dnsmasq-base) 但报
-    #    "Unit dnsmasq.service could not be found" 的情况，直接自建标准 systemd 服务文件！
     local dnsmasq_bin
     dnsmasq_bin=$(command -v dnsmasq 2>/dev/null || echo "/usr/sbin/dnsmasq")
     if [ -x "$dnsmasq_bin" ] && [ ! -f /lib/systemd/system/dnsmasq.service ] && [ ! -f /etc/systemd/system/dnsmasq.service ]; then
@@ -356,20 +345,17 @@ WantedBy=multi-user.target
 DNSMASQ_UNIT_EOF
     fi
 
-    # 5. 确保语法检查通过
     if ! dnsmasq --test >/dev/null 2>&1; then
         sed -i '/^filter-AAAA/d' "$SPEED_CONF" 2>/dev/null
         rm -f "$FASTROUTE_CONF" 2>/dev/null
     fi
 
-    # 6. 启动并设置开机自启
     systemctl unmask dnsmasq >/dev/null 2>&1
     systemctl daemon-reload >/dev/null 2>&1
     systemctl enable dnsmasq >/dev/null 2>&1
     systemctl restart dnsmasq >/dev/null 2>&1
     sleep 1
 
-    # 7. 若 systemd 仍未拉起，则直接启动后台守护进程兜底
     if ! systemctl is-active --quiet dnsmasq && ! pgrep -x dnsmasq >/dev/null 2>&1; then
         "$dnsmasq_bin" --conf-file="$SPEED_CONF" --conf-dir=/etc/dnsmasq.d,*.conf >/dev/null 2>&1
     fi
@@ -379,11 +365,9 @@ DNSMASQ_UNIT_EOF
 setup_dns_accelerator() {
     echo -e "${YELLOW}>>> [3/6] 正在部署本地 dnsmasq 高速内存缓存与智能分流引擎...${NC}"
 
-    # 清理可能残留的旧版固定 IP 锁定文件，防止干扰
     rm -f "$FASTROUTE_CONF" /etc/dnsmasq.d/amazon_dns_pool.conf /etc/dnsmasq.d/amazon_ad_slim.conf 2>/dev/null
     sed -i '/# === AMZ_FAST_HOSTS_START ===/,/# === AMZ_FAST_HOSTS_END ===/d' /etc/hosts 2>/dev/null
 
-    # 先写保底 DNS，保证不断网
     chattr -i /etc/resolv.conf >/dev/null 2>&1
     rm -f /etc/resolv.conf 2>/dev/null
     cat << 'BOOTSTRAP_DNS_EOF' > /etc/resolv.conf
@@ -393,7 +377,6 @@ nameserver 119.29.29.29
 options timeout:1 attempts:1 single-request-reopen
 BOOTSTRAP_DNS_EOF
 
-    # 确保 dig 等工具已安装
     if ! command -v dig >/dev/null 2>&1; then
         echo -e "${CYAN}    正在安装 dig (dnsutils) 极速探测工具...${NC}"
         if command -v apt-get >/dev/null 2>&1; then
@@ -416,7 +399,6 @@ max-cache-ttl=3600
 neg-ttl=30
 dns-forward-max=2000
 all-servers
-# 默认基础上游 DNS (非亚马逊普通域名使用)
 server=223.5.5.5
 server=114.114.114.114
 server=119.29.29.29
@@ -428,7 +410,6 @@ DNSMASQ_HEAD_EOF
 
     repair_and_start_dnsmasq
 
-    # 将 /etc/resolv.conf 第一顺位指向 127.0.0.1 (dnsmasq)，223.5.5.5 与 114 作防断网保底
     chattr -i /etc/resolv.conf >/dev/null 2>&1
     rm -f /etc/resolv.conf 2>/dev/null
     cat << 'RESOLV_EOF' > /etc/resolv.conf
@@ -446,18 +427,22 @@ RESOLV_EOF
 }
 
 # ==============================================================================
-# 4. 【核心王牌功能】每个亚马逊域名在 DNS 池中独立测速，动态选出当前最快的 DNS！
-#    不绑死固定 IP (杜绝 SSL 证书报错 ERR=1)，不写死固定 DNS (随时间波动自动切换)！
+# 4. 【v7.1 三步闭环优选法】
+#    第一步：先通过 11 大 DNS 查询每个亚马逊域名当前命中的所有真实 IP 并去重；
+#    第二步：针对该域名命中的这批真实 IP 逐个进行 HTTPS 握手与总耗时测速；
+#    第三步：将该域名直接精准锁定到测速第 1 名的那个命中 IP (address=/域名/冠军IP + /etc/hosts)！
+#            确保后续打开网页或测速 100% 命中该极速节点，绝不再因 DNS 轮询跳回慢节点/死节点！
 # ==============================================================================
 optimize_per_domain_dns() {
     local silent_mode="${1:-verbose}"
-    [ "$silent_mode" != "silent" ] && echo -e "${YELLOW}>>> [4/6] 正在对亚马逊各核心后台独立测速 11 大 DNS 池，自动为每个域名匹配当前最快 DNS...${NC}"
+    [ "$silent_mode" != "silent" ] && echo -e "${YELLOW}>>> [4/6] 正在执行【先采集各域名真实命中IP -> 针对命中IP去重测速 -> 锁死最快命中IP】...${NC}"
 
-    # 清除任何旧版固定 IP 绑定，避免跨域名借用 IP 引发 SSL ERR=1 证书报错
-    rm -f "$FASTROUTE_CONF" 2>/dev/null
+    # 先清理旧绑定，保证采集到的全是各大 DNS 最新鲜的真实解析结果
+    rm -f "$FASTROUTE_CONF" "$DOMAIN_DNS_CONF" 2>/dev/null
     sed -i '/# === AMZ_FAST_HOSTS_START ===/,/# === AMZ_FAST_HOSTS_END ===/d' /etc/hosts 2>/dev/null
+    repair_and_start_dnsmasq >/dev/null 2>&1
 
-    # 第一步：先用 1 秒并发筛出当前 VPS 能正常连通响应的活跃 DNS 池 (剔除机房防火墙封禁的未响应 DNS)
+    # 筛出当前连通的活跃 DNS 池
     local active_dns_pool=()
     local tmp_alive_dir="/tmp/amz_dns_alive_$$"
     mkdir -p "$tmp_alive_dir"
@@ -484,16 +469,15 @@ optimize_per_domain_dns() {
 
     if [ ${#active_dns_pool[@]} -eq 0 ]; then
         active_dns_pool=(
-            "114.114.114.114|114DNS-电信国际出口"
-            "180.184.1.1|字节火山引擎DNS"
-            "4.2.2.1|Level3-美国骨干DNS"
+            "114.114.114.114|114DNS-电信国际主"
+            "180.184.1.1|字节火山-边缘DNS-1"
+            "4.2.2.1|Level3-美国骨干DNS-1"
             "168.95.1.1|HiNet-亚太国际DNS"
-            "223.5.5.5|阿里云公共DNS"
+            "223.5.5.5|阿里云-杭州Anycast-1"
         )
     fi
 
-    # 第二步：针对每个亚马逊核心业务域名，分别在活跃 DNS 池中测试“哪个 DNS 解析出的节点连得最快”！
-    # 格式: "主测域名|业务名称|关联同证书子域名列表(逗号分隔)"
+    # 6 大核心亚马逊业务模块 (每个域名只测试和锁定它自己解析出来的专属命中 IP，绝不跨域名乱借 IP)
     local domain_groups=(
         "sellercentral.amazon.com|1. 亚马逊北美卖家中心 (Seller Central)|sellercentral.amazon.com,sellercentral-europe.amazon.com"
         "advertising.amazon.com|2. 亚马逊广告管理中心 (Advertising)|advertising.amazon.com,na.account.amazon.com,fls-na.amazon.com,unagi-na.amazon.com,unagi.amazon.com"
@@ -505,124 +489,165 @@ optimize_per_domain_dns() {
 
     mkdir -p /etc/dnsmasq.d
     cat << CONF_HEAD_EOF > "$DOMAIN_DNS_CONF"
-# 晓林技术 v7.0 - 亚马逊各域名独立动态优选 DNS 路由表 (更新时间: $(date '+%Y-%m-%d %H:%M:%S'))
-# 说明: 每个域名独立匹配当前实测响应最快的 DNS 服务器 (server=/域名/最优DNS)，不绑死固定 IP！
+# 晓林技术 v7.1 - 亚马逊各域名专属命中 IP 极速锁定表 (更新时间: $(date '+%Y-%m-%d %H:%M:%S'))
+# 核心逻辑: 先通过多路 DNS 采集该域名自身命中的真实 IP -> 对命中 IP 逐一真机测速 -> 100% 锁死最快命中 IP！
 CONF_HEAD_EOF
 
+    local hosts_block="# === AMZ_FAST_HOSTS_START ===\n"
     local summary_log=""
 
     for grp in "${domain_groups[@]}"; do
         IFS='|' read -r test_dom grp_title sub_doms <<< "$grp"
         [ "$silent_mode" != "silent" ] && echo -e "\n${CYAN}  ======================================================================${NC}"
-        [ "$silent_mode" != "silent" ] && echo -e "  ${YELLOW}● 正在为【${grp_title}】(${WHITE}${test_dom}${YELLOW}) 优选最快 DNS:${NC}"
+        [ "$silent_mode" != "silent" ] && echo -e "  ${YELLOW}● 正在采集并测速【${grp_title}】(${WHITE}${test_dom}${YELLOW}) 的真实命中节点:${NC}"
 
-        local tmp_dom_dir="/tmp/amz_dom_dns_${test_dom}_$$"
+        # ----------------------------------------------------------------------
+        # 第一步：并发向所有活跃 DNS 查询该域名当前命中的所有真实 IP
+        # ----------------------------------------------------------------------
+        local tmp_collect_dir="/tmp/amz_col_${test_dom}_$$"
+        mkdir -p "$tmp_collect_dir"
+        local c_idx=0
+        for dns_item in "${active_dns_pool[@]}"; do
+            c_idx=$((c_idx + 1))
+            IFS='|' read -r dns_ip dns_name <<< "$dns_item"
+            (
+                # 获取该 DNS 返回的所有 A 记录 IP (最多取前 2 个)
+                local raw_ips
+                raw_ips=$(dig +time=1 +tries=1 +short A "$test_dom" @"$dns_ip" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 2)
+                for rip in $raw_ips; do
+                    echo "${rip}|${dns_ip}|${dns_name}" >> "${tmp_collect_dir}/${c_idx}"
+                done
+            ) &
+        done
+        wait
+
+        # 对采集到的命中 IP 进行去重 (同一个命中 IP 只测速一次，避免不同 DNS 解析出同一个 IP 时重复测速)
+        local unique_hit_ips=()
+        local seen_hit_ips=()
+        if ls "${tmp_collect_dir}"/* >/dev/null 2>&1; then
+            while IFS='|' read -r h_ip h_dns_ip h_dns_name; do
+                [ -z "$h_ip" ] && continue
+                local is_dup=0
+                for s_ip in "${seen_hit_ips[@]}"; do
+                    [ "$s_ip" == "$h_ip" ] && is_dup=1 && break
+                done
+                if [ $is_dup -eq 0 ]; then
+                    seen_hit_ips+=("$h_ip")
+                    unique_hit_ips+=("${h_ip}|${h_dns_ip}|${h_dns_name}")
+                fi
+            done < <(cat "${tmp_collect_dir}"/* 2>/dev/null)
+        fi
+        rm -rf "$tmp_collect_dir"
+
+        [ "$silent_mode" != "silent" ] && echo -e "    └─ 第一步完成: 共采集到 ${WHITE}${#unique_hit_ips[@]}${NC} 个属于 ${WHITE}${test_dom}${NC} 的不同真实命中节点 IP，开始逐个测速..."
+
+        # ----------------------------------------------------------------------
+        # 第二步：针对采集到的每一个唯一命中 IP 进行真机 HTTPS 握手与总耗时测速
+        # ----------------------------------------------------------------------
+        local tmp_dom_dir="/tmp/amz_dom_spd_${test_dom}_$$"
         mkdir -p "$tmp_dom_dir"
         local p_idx=0
 
-        for dns_item in "${active_dns_pool[@]}"; do
+        for hit_item in "${unique_hit_ips[@]}"; do
             p_idx=$((p_idx + 1))
-            IFS='|' read -r dns_ip dns_name <<< "$dns_item"
+            IFS='|' read -r res_ip dns_ip dns_name <<< "$hit_item"
             (
-                # 1. 查询该 DNS 将该域名解析到哪个 IP
-                local res_ip
-                res_ip=$(dig +time=1 +tries=1 +short A "$test_dom" @"$dns_ip" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
-                if [ -n "$res_ip" ]; then
-                    # 2. 实测该 DNS 解析出的 IP 的真实 HTTPS 访问速度 (针对该域名自身证书校验)
-                    local curl_out
-                    curl_out=$(curl -4 -s -o /dev/null --connect-timeout 2 --max-time 4 \
-                        --resolve "${test_dom}:443:${res_ip}" \
-                        -w "%{http_code}|%{time_connect}|%{time_appconnect}|%{time_total}" \
-                        "https://${test_dom}/" 2>/dev/null)
-                    IFS='|' read -r h_code t_tcp t_ssl t_tot <<< "$curl_out"
+                local curl_out
+                curl_out=$(curl -4 -s -o /dev/null --connect-timeout 2 --max-time 4 \
+                    --resolve "${test_dom}:443:${res_ip}" \
+                    -w "%{http_code}|%{time_connect}|%{time_appconnect}|%{time_total}" \
+                    "https://${test_dom}/" 2>/dev/null)
+                IFS='|' read -r h_code t_tcp t_ssl t_tot <<< "$curl_out"
 
-                    local ms_tcp ms_ssl ms_tot
-                    ms_tcp=$(awk "BEGIN {printf \"%.0f\", $t_tcp * 1000}")
-                    ms_ssl=$(awk "BEGIN {printf \"%.0f\", $t_ssl * 1000}")
-                    ms_tot=$(awk "BEGIN {printf \"%.0f\", $t_tot * 1000}")
+                local ms_tcp ms_ssl ms_tot
+                ms_tcp=$(awk "BEGIN {printf \"%.0f\", $t_tcp * 1000}")
+                ms_ssl=$(awk "BEGIN {printf \"%.0f\", $t_ssl * 1000}")
+                ms_tot=$(awk "BEGIN {printf \"%.0f\", $t_tot * 1000}")
 
-                    # 情况 A: 完成标准 HTTPS 握手且返回正常 HTTP 状态码 (剔除 503 报错与 000 超时)
-                    if [[ "$h_code" =~ ^(200|202|204|301|302|307|400|403|404)$ ]] && [ "$ms_ssl" -gt 0 ] && [ "$ms_tot" -lt 4200 ]; then
-                        local score=$((ms_ssl + ms_tot))
-                        printf "OK|%06d|%s|%s|%s|%s|%s|%s|%s\n" "$score" "$dns_ip" "$dns_name" "$res_ip" "$h_code" "$ms_tcp" "$ms_ssl" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
-                    # 情况 B: 针对 images-na 等在根路径 / 被重置但 TCP 握手极快 (<150ms) 的边缘节点，按 TCP 握手速度评级
-                    elif [ "$test_dom" == "images-na.ssl-images-amazon.com" ] && [ "$ms_tcp" -gt 0 ] && [ "$ms_tcp" -lt 300 ]; then
-                        local score=$((2000 + ms_tcp))
-                        printf "TCP_OK|%06d|%s|%s|%s|%s|%s|%s|%s\n" "$score" "$dns_ip" "$dns_name" "$res_ip" "CDN就绪" "$ms_tcp" "$ms_tcp" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
-                    else
-                        printf "FAIL|999999|%s|%s|%s|%s|%s|%s|%s\n" "$dns_ip" "$dns_name" "$res_ip" "${h_code:-000}" "$ms_tcp" "$ms_ssl" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
-                    fi
+                if [[ "$h_code" =~ ^(200|202|204|301|302|307|400|403|404)$ ]] && [ "$ms_ssl" -gt 0 ] && [ "$ms_tot" -lt 4200 ]; then
+                    local score=$((ms_ssl + ms_tot))
+                    printf "OK|%06d|%s|%s|%s|%s|%s|%s|%s\n" "$score" "$res_ip" "$dns_ip" "$dns_name" "$h_code" "$ms_tcp" "$ms_ssl" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
+                elif [ "$test_dom" == "images-na.ssl-images-amazon.com" ] && [ "$ms_tcp" -gt 0 ] && [ "$ms_tcp" -lt 300 ]; then
+                    local score=$((2000 + ms_tcp))
+                    printf "TCP_OK|%06d|%s|%s|%s|%s|%s|%s|%s\n" "$score" "$res_ip" "$dns_ip" "$dns_name" "CDN就绪" "$ms_tcp" "$ms_tcp" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
+                else
+                    printf "FAIL|999999|%s|%s|%s|%s|%s|%s|%s\n" "$res_ip" "$dns_ip" "$dns_name" "${h_code:-000}" "$ms_tcp" "$ms_ssl" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
                 fi
             ) &
         done
         wait
 
+        local best_res_ip=""
         local best_dns_ip=""
         local best_dns_name=""
-        local second_dns_ip=""
-        local best_res_ip=""
         local best_tot_ms=""
 
         if ls "${tmp_dom_dir}"/* >/dev/null 2>&1; then
-            while IFS='|' read -r st score_pad dip dname rip hcode mtcp mssl mtot; do
+            while IFS='|' read -r st score_pad rip dip dname hcode mtcp mssl mtot; do
                 if [ "$st" == "OK" ]; then
-                    [ "$silent_mode" != "silent" ] && echo -e "    ${GREEN}[✓ 极速推荐]${NC} DNS: ${WHITE}${dip}${NC} (${dname}) -> 解析IP: ${WHITE}${rip}${NC} | HTTP=${GREEN}${hcode}${NC} | TCP=${CYAN}${mtcp}ms${NC} | SSL=${CYAN}${mssl}ms${NC} | 总耗时=${GREEN}${mtot}ms${NC}"
-                    if [ -z "$best_dns_ip" ]; then
+                    [ "$silent_mode" != "silent" ] && echo -e "    ${GREEN}[✓ 极速命中节点]${NC} 节点IP: ${WHITE}${rip}${NC} (由 ${dip} ${dname} 命中) -> HTTP=${GREEN}${hcode}${NC} | TCP=${CYAN}${mtcp}ms${NC} | SSL=${CYAN}${mssl}ms${NC} | 总耗时=${GREEN}${mtot}ms${NC}"
+                    if [ -z "$best_res_ip" ]; then
+                        best_res_ip="$rip"
                         best_dns_ip="$dip"
                         best_dns_name="$dname"
-                        best_res_ip="$rip"
                         best_tot_ms="${mtot}ms"
-                    elif [ -z "$second_dns_ip" ] && [ "$dip" != "$best_dns_ip" ]; then
-                        second_dns_ip="$dip"
                     fi
                 elif [ "$st" == "TCP_OK" ]; then
-                    [ "$silent_mode" != "silent" ] && echo -e "    ${CYAN}[✓ 节点就绪]${NC} DNS: ${WHITE}${dip}${NC} (${dname}) -> 解析IP: ${WHITE}${rip}${NC} | TCP握手=${GREEN}${mtcp}ms${NC} (极速边缘通道)"
-                    if [ -z "$best_dns_ip" ]; then
+                    [ "$silent_mode" != "silent" ] && echo -e "    ${CYAN}[✓ 极速图片节点]${NC} 节点IP: ${WHITE}${rip}${NC} (由 ${dip} ${dname} 命中) -> TCP握手=${GREEN}${mtcp}ms${NC} (CDN边缘通道)"
+                    if [ -z "$best_res_ip" ]; then
+                        best_res_ip="$rip"
                         best_dns_ip="$dip"
                         best_dns_name="$dname"
-                        best_res_ip="$rip"
                         best_tot_ms="TCP:${mtcp}ms"
-                    elif [ -z "$second_dns_ip" ] && [ "$dip" != "$best_dns_ip" ]; then
-                        second_dns_ip="$dip"
                     fi
                 else
-                    [ "$silent_mode" != "silent" ] && echo -e "    ${RED}[✗ 慢或报错]${NC} DNS: ${WHITE}${dip}${NC} (${dname}) -> 解析IP: ${WHITE}${rip}${NC} | HTTP=${RED}${hcode}${NC} | 总耗时=${mtot}ms (自动跳过)"
+                    [ "$silent_mode" != "silent" ] && echo -e "    ${RED}[✗ 淘汰问题节点]${NC} 节点IP: ${WHITE}${rip}${NC} (由 ${dip} ${dname} 命中) -> HTTP=${RED}${hcode}${NC} | 总耗时=${mtot}ms (超时或503报错)"
                 fi
             done < <(cat "${tmp_dom_dir}"/* 2>/dev/null | sort -t'|' -k2,2n)
         fi
         rm -rf "$tmp_dom_dir"
 
-        # 保底：若当前所有 DNS 均超时，默认分配 114.114.114.114 与 4.2.2.1
-        if [ -z "$best_dns_ip" ]; then
-            best_dns_ip="114.114.114.114"
-            best_dns_name="114DNS-电信国际出口"
-            second_dns_ip="4.2.2.1"
-            best_tot_ms="动态"
-        fi
-
-        [ "$silent_mode" != "silent" ] && echo -e "    ${YELLOW}★ 自动选定最佳 DNS:${NC} 【${WHITE}${test_dom}${NC}】 -> 首选 DNS: ${GREEN}${best_dns_ip} (${best_dns_name})${NC} ${second_dns_ip:+| 备选 DNS: $second_dns_ip}"
-
-        # 将该域名及其同组子域名的解析权交给选出的冠军 DNS (server=/域名/冠军DNS)
+        # ----------------------------------------------------------------------
+        # 第三步：直接将该域名精准锁定到刚才实测第 1 名的那个命中节点 IP！
+        #         (既写入 dnsmasq address=/域名/冠军IP，又写入 /etc/hosts，100% 杜绝跳 IP！)
+        # ----------------------------------------------------------------------
         echo "" >> "$DOMAIN_DNS_CONF"
-        echo "# ${grp_title} -> 当前最快 DNS: ${best_dns_ip} (${best_dns_name}, 解析IP: ${best_res_ip}, 耗时: ${best_tot_ms})" >> "$DOMAIN_DNS_CONF"
-        IFS=',' read -ra dom_list <<< "$sub_doms"
-        for sub_d in "${dom_list[@]}"; do
-            echo "server=/${sub_d}/${best_dns_ip}" >> "$DOMAIN_DNS_CONF"
-            [ -n "$second_dns_ip" ] && echo "server=/${sub_d}/${second_dns_ip}" >> "$DOMAIN_DNS_CONF"
-        done
-
-        summary_log="${summary_log}${test_dom}->DNS:${best_dns_ip}(${best_tot_ms}) "
+        if [ -n "$best_res_ip" ]; then
+            [ "$silent_mode" != "silent" ] && echo -e "    ${YELLOW}★ 最终锁定最快命中节点:${NC} 【${WHITE}${test_dom}${NC}】 ===> 100% 锁定至节点 ${GREEN}${best_res_ip}${NC} (耗时: ${best_tot_ms}, 发现自 DNS ${best_dns_ip})"
+            echo "# ${grp_title} -> 已100%锁定最快命中节点IP: ${best_res_ip} (实测耗时: ${best_tot_ms}, 来源DNS: ${best_dns_ip} ${best_dns_name})" >> "$DOMAIN_DNS_CONF"
+            IFS=',' read -ra dom_list <<< "$sub_doms"
+            for sub_d in "${dom_list[@]}"; do
+                # 1. 在 dnsmasq 中直接把该域名锁定到这个冠军命中 IP (0ms 返回，且屏蔽 AAAA 请求)
+                echo "address=/${sub_d}/${best_res_ip}" >> "$DOMAIN_DNS_CONF"
+                # 2. 在 /etc/hosts 中同步写入精准映射，确保本机 curl 与 gost 100% 命中该节点
+                hosts_block="${hosts_block}${best_res_ip} ${sub_d}\n"
+                # 3. 将该域名未显式列出的其他三级子域名交给发现该好节点的冠军 DNS 解析
+                [ -n "$best_dns_ip" ] && echo "server=/${sub_d}/${best_dns_ip}" >> "$DOMAIN_DNS_CONF"
+            done
+            summary_log="${summary_log}${test_dom}->${best_res_ip}(${best_tot_ms}) "
+        else
+            [ "$silent_mode" != "silent" ] && echo -e "    ${YELLOW}○ 本轮未筛出静态节点，保持由 4.2.2.1 / 114.114.114.114 动态解析${NC}"
+            echo "# ${grp_title} -> 动态解析模式 (DNS: 4.2.2.1 / 114.114.114.114)" >> "$DOMAIN_DNS_CONF"
+            IFS=',' read -ra dom_list <<< "$sub_doms"
+            for sub_d in "${dom_list[@]}"; do
+                echo "server=/${sub_d}/4.2.2.1" >> "$DOMAIN_DNS_CONF"
+                echo "server=/${sub_d}/114.114.114.114" >> "$DOMAIN_DNS_CONF"
+            done
+        fi
     done
 
-    # 重启并修复 dnsmasq 使分域名 DNS 路由表立即生效
+    hosts_block="${hosts_block}# === AMZ_FAST_HOSTS_END ==="
+    echo -e "$hosts_block" >> /etc/hosts
+
+    # 重启并修复 dnsmasq 使锁定的冠军命中节点立即生效
     repair_and_start_dnsmasq
 
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 按域名优选DNS完成 | ${summary_log}" >> "$AUTO_OPT_LOG"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 命中节点测速锁定完成 | ${summary_log}" >> "$AUTO_OPT_LOG"
     tail -n 200 "$AUTO_OPT_LOG" > "${AUTO_OPT_LOG}.tmp" 2>/dev/null && mv -f "${AUTO_OPT_LOG}.tmp" "$AUTO_OPT_LOG" 2>/dev/null
 
     if [ "$silent_mode" != "silent" ]; then
         echo -e "\n${GREEN}========================================================================${NC}"
-        echo -e "${GREEN}>>> 按域名动态优选 DNS 已全部生效！当前各后台自动匹配的最快 DNS 如下：${NC}"
+        echo -e "${GREEN}>>> 各域名最快命中节点已 100% 锁定生效！现在访问或测速绝不再随机跳 IP：${NC}"
         grep "^# [1-6]\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
         echo -e "${GREEN}========================================================================${NC}"
     fi
@@ -656,32 +681,32 @@ CRON_SCRIPT_EOF
     fi
 }
 
-# 菜单 [3]: 按域名独立优选 DNS 池与定时自动切换中心
+# 菜单 [3]: 按域名采集命中节点测速与定时自动优选中心
 auto_dns_optimizer_menu() {
     clear
     local cur_status="${RED}未开启${NC}"
     local cur_interval="20"
     [ -f "$AUTO_OPT_CONF" ] && source "$AUTO_OPT_CONF" && cur_interval="${INTERVAL_MIN:-20}"
     if crontab -l 2>/dev/null | grep -q "$AUTO_OPT_SCRIPT"; then
-        cur_status="${GREEN}● 运行中 (每 ${cur_interval} 分钟自动为每个亚马逊域名重新测速切换最快 DNS)${NC}"
+        cur_status="${GREEN}● 运行中 (每 ${cur_interval} 分钟自动重新采集各域名命中节点并锁定最快 IP)${NC}"
     fi
 
     echo -e "${YELLOW}========================================================================${NC}"
-    echo -e "${GREEN}     【亚马逊按域名独立优选 DNS 池与自动切换中心 (v7.0 旗舰版)】        ${NC}"
+    echo -e "${GREEN}     【亚马逊各域名命中节点测速锁定与定时优选中心 (v7.1 旗舰版)】       ${NC}"
     echo -e "${YELLOW}========================================================================${NC}"
-    echo -e "核心原理：不写死哪个域名固定用哪个 DNS！卖家中心、广告后台、静态库、图片 CDN"
-    echo -e "各自独立向 11 大 DNS 池测速，此时此刻哪个 DNS 最快且不报 503，就自动用哪个！"
+    echo -e "核心逻辑：先通过 11 大 DNS 采集每个亚马逊域名当前命中的所有真实节点 IP ->"
+    echo -e "对这批命中节点逐一测速 -> 直接 100% 锁死该域名最快的命中 IP (绝不随机跳 IP)！"
     echo -e "${CYAN}------------------------------------------------------------------------${NC}"
     echo -e " 当前自动优选状态 : ${cur_status}"
     echo -e " 最近一次优选记录 : ${WHITE}$(tail -n 1 "$AUTO_OPT_LOG" 2>/dev/null || echo '暂无记录')${NC}"
     echo -e "${CYAN}------------------------------------------------------------------------${NC}"
-    echo -e " 1. ${GREEN}立即执行【按域名独立测速 DNS 池 + 打印全域名 DNS 速度排行榜】${NC}"
-    echo -e " 2. 设置为 【每 10 分钟】 自动重新测速切换最快 DNS (适合晚高峰波动期)"
-    echo -e " 3. 设置为 【每 20 分钟】 自动重新测速切换最快 DNS ${GREEN}(★ 推荐黄金频率)${NC}"
-    echo -e " 4. 设置为 【每 30 分钟】 自动重新测速切换最快 DNS"
-    echo -e " 5. 设置为 【每 60 分钟】 自动重新测速切换最快 DNS"
+    echo -e " 1. ${GREEN}立即执行【采集各域名命中节点 + 逐个测速并 100% 锁定最快命中 IP】${NC}"
+    echo -e " 2. 设置为 【每 10 分钟】 自动重新采集测速并更新最快命中 IP (适合晚高峰)"
+    echo -e " 3. 设置为 【每 20 分钟】 自动重新采集测速并更新最快命中 IP ${GREEN}(★ 推荐)${NC}"
+    echo -e " 4. 设置为 【每 30 分钟】 自动重新采集测速并更新最快命中 IP"
+    echo -e " 5. 设置为 【每 60 分钟】 自动重新采集测速并更新最快命中 IP"
     echo -e " 6. ${CYAN}【自定义时间间隔】${NC} (自由输入分钟数，如 5 分钟、15 分钟、45 分钟等)"
-    echo -e " 7. 查看自动优选历史日志 (查看历次各域名自动选中的最快 DNS 与耗时)"
+    echo -e " 7. 查看自动优选历史日志 (查看历次各域名锁定的命中 IP 与毫秒耗时)"
     echo -e " 8. ${RED}关闭自动定时优选${NC}"
     echo -e " 0. 返回主菜单"
     echo -e "${YELLOW}========================================================================${NC}"
@@ -694,29 +719,29 @@ auto_dns_optimizer_menu() {
         2)
             install_auto_optimizer_cron 10
             optimize_per_domain_dns "verbose"
-            echo -e "${GREEN}>>> 已开启【每 10 分钟】按域名自动重新测速优选 DNS！${NC}"
+            echo -e "${GREEN}>>> 已开启【每 10 分钟】自动采集命中节点并锁定最快 IP！${NC}"
             ;;
         3)
             install_auto_optimizer_cron 20
             optimize_per_domain_dns "verbose"
-            echo -e "${GREEN}>>> 已开启【每 20 分钟】按域名自动重新测速优选 DNS！${NC}"
+            echo -e "${GREEN}>>> 已开启【每 20 分钟】自动采集命中节点并锁定最快 IP！${NC}"
             ;;
         4)
             install_auto_optimizer_cron 30
             optimize_per_domain_dns "verbose"
-            echo -e "${GREEN}>>> 已开启【每 30 分钟】按域名自动重新测速优选 DNS！${NC}"
+            echo -e "${GREEN}>>> 已开启【每 30 分钟】自动采集命中节点并锁定最快 IP！${NC}"
             ;;
         5)
             install_auto_optimizer_cron 60
             optimize_per_domain_dns "verbose"
-            echo -e "${GREEN}>>> 已开启【每 60 分钟】按域名自动重新测速优选 DNS！${NC}"
+            echo -e "${GREEN}>>> 已开启【每 60 分钟】自动采集命中节点并锁定最快 IP！${NC}"
             ;;
         6)
             read -p "请输入您希望自动优选的间隔分钟数 (例如 15): " custom_min
             if [[ "$custom_min" =~ ^[0-9]+$ ]] && [ "$custom_min" -ge 1 ] && [ "$custom_min" -le 1440 ]; then
                 install_auto_optimizer_cron "$custom_min"
                 optimize_per_domain_dns "verbose"
-                echo -e "${GREEN}>>> 已成功设置为【每 ${custom_min} 分钟】按域名自动优选一次 DNS！${NC}"
+                echo -e "${GREEN}>>> 已成功设置为【每 ${custom_min} 分钟】自动优选一次！${NC}"
             else
                 echo -e "${RED}输入无效，请输入 1 到 1440 之间的整数分钟！${NC}"
             fi
@@ -782,7 +807,6 @@ verify_and_repair_all() {
     echo -e "\n${YELLOW}>>> [6/6] 正在执行全组件安装后自检与未启动项目自动重装修复...${NC}"
     local all_ok=1
 
-    # 自检 1: dig (dnsutils) 探测工具
     if command -v dig >/dev/null 2>&1; then
         echo -e "    [自检 1/5] dig 域名探测工具   : ${GREEN}● 正常就绪${NC}"
     else
@@ -798,7 +822,6 @@ verify_and_repair_all() {
         fi
     fi
 
-    # 自检 2: dnsmasq 本地高速 DNS 缓存与分域名路由服务
     if (systemctl is-active --quiet dnsmasq || pgrep -x dnsmasq >/dev/null 2>&1) && ss -ulpn 2>/dev/null | grep -q ":53 "; then
         echo -e "    [自检 2/5] dnsmasq 加速引擎   : ${GREEN}● 正在运行且正常监听 127.0.0.1:53${NC}"
     else
@@ -807,12 +830,11 @@ verify_and_repair_all() {
         if (systemctl is-active --quiet dnsmasq || pgrep -x dnsmasq >/dev/null 2>&1); then
             echo -e "               └─ 修复结果        : ${GREEN}✓ dnsmasq 已被成功修复并正常跑起来了！${NC}"
         else
-            echo -e "               └─ 修复结果        : ${RED}✗ dnsmasq 启动失败，已自动回退至 /etc/resolv.conf 保底 DNS${NC}"
+            echo -e "               └─ 修复结果        : ${RED}✗ dnsmasq 启动失败，已自动回退至 /etc/hosts + 保底 DNS${NC}"
             all_ok=0
         fi
     fi
 
-    # 自检 3: gost 代理服务与端口监听
     load_proxy_config
     if systemctl is-active --quiet gost && (ss -tlpn 2>/dev/null | grep -q ":${PROXY_PORT} " || netstat -tlpn 2>/dev/null | grep -q ":${PROXY_PORT} "); then
         echo -e "    [自检 3/5] Gost 双协议代理服务: ${GREEN}● 正在运行 (监听端口: ${PROXY_PORT})${NC}"
@@ -859,7 +881,6 @@ SERVICE_EOF
         fi
     fi
 
-    # 自检 4: cron 定时自动优选守护进程
     if (systemctl is-active --quiet cron || systemctl is-active --quiet crond || pgrep -x cron >/dev/null 2>&1 || pgrep -x crond >/dev/null 2>&1) && crontab -l 2>/dev/null | grep -q "$AUTO_OPT_SCRIPT"; then
         echo -e "    [自检 4/5] 自动优选定时守护   : ${GREEN}● 正在运行 (定时任务已挂载)${NC}"
     else
@@ -869,7 +890,6 @@ SERVICE_EOF
         echo -e "               └─ 修复结果        : ${GREEN}✓ 定时自动优选守护已成功激活！${NC}"
     fi
 
-    # 自检 5: BBR 拥塞控制算法
     local bbr_now
     bbr_now=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     if [ "$bbr_now" == "bbr" ]; then
@@ -1114,8 +1134,8 @@ download_gost() {
     local ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
     local mirrors=(
-        "https://ghfast.top/${gh_file}"
         "https://gh-proxy.com/${gh_file}"
+        "https://ghfast.top/${gh_file}"
         "https://ghproxy.homeboyc.cn/${gh_file}"
         "https://gh.zwy.one/${gh_file}"
         "https://ghproxy.net/${gh_file}"
@@ -1245,6 +1265,7 @@ SERVICE_EOF
     systemctl daemon-reload
     systemctl enable gost >/dev/null 2>&1
     systemctl restart gost
+    sleep 1
 
     verify_and_repair_all
     query_proxy_info "no_pause"
@@ -1270,7 +1291,7 @@ query_proxy_info() {
 
     local dnsmasq_state="${RED}○ 未运行${NC}"
     if systemctl is-active --quiet dnsmasq || pgrep -x dnsmasq >/dev/null 2>&1; then
-        dnsmasq_state="${GREEN}● 运行中 (按域名独立优选 DNS 池已挂载)${NC}"
+        dnsmasq_state="${GREEN}● 运行中 (各域名最快命中节点已 100% 锁定)${NC}"
     fi
 
     local port_listen="未监听"
@@ -1286,7 +1307,7 @@ query_proxy_info() {
     if crontab -l 2>/dev/null | grep -q "$AUTO_OPT_SCRIPT"; then
         local iv="20"
         [ -f "$AUTO_OPT_CONF" ] && source "$AUTO_OPT_CONF" && iv="${INTERVAL_MIN:-20}"
-        auto_opt_info="${GREEN}已开启 (每 ${iv} 分钟自动为各亚马逊域名重新优选最快 DNS)${NC}"
+        auto_opt_info="${GREEN}已开启 (每 ${iv} 分钟自动重新采集命中节点并锁定最快 IP)${NC}"
     fi
 
     echo -e "${YELLOW}==============================================================${NC}"
@@ -1344,7 +1365,7 @@ test_url_speed() {
         --connect-timeout 5 --max-time 12 "$target_url" 2>/dev/null)
 
     if [ -z "$result" ]; then
-        echo -e "    状态检测: ${RED}连接超时或阻断 (建议执行菜单[3]重新优选 DNS)${NC}"
+        echo -e "    状态检测: ${RED}连接超时或阻断 (建议执行菜单[3]重新优选)${NC}"
         return 1
     fi
 
@@ -1360,14 +1381,13 @@ test_url_speed() {
     [ "$ms_ssl" -lt 0 ] && ms_ssl=0
     [ "$ms_ttfb" -lt 0 ] && ms_ttfb=0
 
-    # 针对 images-na 根路径不返回内容但 TCP 秒连的情况单独显示
     if [ "$http_code" == "000" ]; then
         if [[ "$target_url" == *"images-na.ssl-images-amazon.com"* ]] && [ "$ms_tcp" -gt 0 ] && [ "$ms_tcp" -lt 300 ]; then
             echo -e "    命中节点 : ${WHITE}${remote_ip}${NC} (CDN 边缘节点已就绪)"
             echo -e "    分段耗时 : DNS=${GREEN}${ms_dns}ms${NC} | TCP握手=${GREEN}${ms_tcp}ms${NC}  [综合评级: ${GREEN}边缘链路正常 (浏览器按实际图片路径加载)${NC}]"
             return 0
         fi
-        echo -e "    状态检测: ${RED}连接超时或握手失败 (目标节点: ${remote_ip:-未知}) -> 请按[3]选择[1]立即重新优选 DNS！${NC}"
+        echo -e "    状态检测: ${RED}连接超时或握手失败 (目标节点: ${remote_ip:-未知}) -> 请按[3]选择[1]重新锁定新节点！${NC}"
         return 1
     fi
 
@@ -1379,7 +1399,7 @@ test_url_speed() {
     elif [ "$ms_total" -lt 4000 ]; then
         speed_rate="${YELLOW}良好 (正常)${NC}"
     else
-        speed_rate="${RED}偏慢 (建议在菜单[3]触发 DNS 重新优选)${NC}"
+        speed_rate="${RED}偏慢 (建议在菜单[3]触发重新优选)${NC}"
     fi
 
     echo -e "    命中节点 : ${WHITE}${remote_ip}${NC} (HTTP ${http_code})"
@@ -1402,11 +1422,11 @@ test_amazon_suite() {
     test_url_speed "https://aax-us-east.amazon-adsystem.com/" "6. 亚马逊北美广告竞价与报表引擎 (AAX US-East)"
     test_url_speed "https://www.amazon.com/" "7. 亚马逊北美主站商品前台 (Storefront)"
 
-    echo -e "\n${YELLOW}========================= 当前各域名绑定的最优 DNS =========================${NC}"
+    echo -e "\n${YELLOW}================== 当前各域名已 100% 锁定的最快命中节点 ==================${NC}"
     if [ -f "$DOMAIN_DNS_CONF" ]; then
         grep "^# [1-6]\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
     fi
-    echo -e "${YELLOW}============================================================================${NC}"
+    echo -e "${YELLOW}==========================================================================${NC}"
 }
 
 # 7. VPS IP 纯净度体检与中国本土卖家防关联评估
@@ -1416,7 +1436,7 @@ check_ip_association_risk() {
     ip=$(get_public_ip)
 
     echo -e "${YELLOW}======================================================================${NC}"
-    echo -e "${GREEN}   【VPS IP 纯净度体检与中国本土卖家“一号一IP”防关联深度评估 v7.0】   ${NC}"
+    echo -e "${GREEN}   【VPS IP 纯净度体检与中国本土卖家“一号一IP”防关联深度评估 v7.1】   ${NC}"
     echo -e "${YELLOW}======================================================================${NC}"
     echo -e "正在检测 IP 归属地、城市一致性 (防视频验证)、智能 DNS 池及防泄露护盾...\n"
 
@@ -1458,7 +1478,7 @@ check_ip_association_risk() {
 
     echo -e "\n${CYAN}------------------- 【2. 亚马逊防关联与环境纯净度诊断】 -------------------${NC}"
     echo -e " 黑名单标记  : $( [ "$is_proxy" == "true" ] && echo -e "${RED}已被标记为公开代理 (建议更换IP或开启白名单锁)${NC}" || echo -e "${GREEN}纯净 (未被标记为公开黑名单代理)${NC}" )"
-    echo -e " DNS 路由策略: ${GREEN}按域名独立动态优选 DNS (不绑死固定 IP，100% 原生 SSL 证书校验)${NC}"
+    echo -e " 节点锁定策略: ${GREEN}先采集各域名专属命中IP -> 对命中IP去重测速 -> 100%锁死冠军命中IP${NC}"
     echo -e " IPv6 防卡顿 : $ipv6_status"
     echo -e " WebRTC 防护 : $webrtc_fw"
     echo -e " 店铺地域策略: $( [ "$cc" == "CN" ] && echo -e "${GREEN}中国本土卖家同城 IP 模式 (${city}) - 符合营业执照所在地常用登录特征${NC}" || echo -e "${CYAN}海外本土 IP 模式 (${country}-${city})${NC}" )"
@@ -1524,11 +1544,11 @@ install_all() {
     fi
 }
 
-# 单独一键无损极速升级 v7.0
+# 单独一键无损极速升级 v7.1
 optimize_suite_only() {
     clear
     echo -e "${YELLOW}========================================================================${NC}"
-    echo -e "${GREEN}  正在执行: v7.0 按域名独立动态优选 DNS 池 + 修复 dnsmasq + 全组件自检  ${NC}"
+    echo -e "${GREEN}  正在执行: v7.1 采集各域名专属命中节点 -> 逐个测速 -> 100%锁定最快IP   ${NC}"
     echo -e "${YELLOW}========================================================================${NC}"
     ensure_working_dns
     optimize_kernel
@@ -1540,21 +1560,21 @@ optimize_suite_only() {
     verify_and_repair_all
 
     echo -e "\n${GREEN}========================================================================${NC}"
-    echo -e "${GREEN}  恭喜！v7.0 按域名动态优选 DNS 池与全组件修复已全部生效！               ${NC}"
-    echo -e "${GREEN}  1. 卖家中心、广告后台、静态库、图片CDN 已各自绑定当下实测最快的 DNS    ${NC}"
-    echo -e "${GREEN}  2. 已彻底清除旧版固定死 IP，绝不产生跨域名 SSL 证书报错 (ERR=1)        ${NC}"
-    echo -e "${GREEN}  3. 已自动补建 dnsmasq.service 单元，5 大核心组件全部通过自检正常运行！ ${NC}"
+    echo -e "${GREEN}  恭喜！v7.1 三步闭环优选已全部生效 (原有端口密码不变)！                 ${NC}"
+    echo -e "${GREEN}  1. 已先查询每个亚马逊域名命中的真实节点 -> 针对命中节点逐个测速        ${NC}"
+    echo -e "${GREEN}  2. 已将每个域名 100% 锁定到它自己实测第 1 名的命中 IP (绝不再跳死节点) ${NC}"
+    echo -e "${GREEN}  3. 现在去执行菜单 [7] 测速，上方命中节点将与下方锁定的冠军 IP 完全一致！${NC}"
     echo -e "${GREEN}========================================================================${NC}"
 }
 
 # 查看系统与网络状态
 check_status() {
     clear
-    echo -e "${YELLOW}================ 当前系统与全组件健康度状态排查 (v7.0) ================${NC}"
+    echo -e "${YELLOW}================ 当前系统与全组件健康度状态排查 (v7.1) ================${NC}"
     verify_and_repair_all
 
     if [ -f "$DOMAIN_DNS_CONF" ]; then
-        echo -e "\n${CYAN}---------------- 当前各亚马逊域名自动优选匹配的最快 DNS ----------------${NC}"
+        echo -e "\n${CYAN}---------------- 当前各亚马逊域名已 100% 锁定的最快命中节点 ----------------${NC}"
         grep "^# [1-6]\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
     fi
     echo -e "${YELLOW}=======================================================================${NC}"
@@ -1566,7 +1586,7 @@ manage_service() {
     echo -e "${YELLOW}=== 服务运行控制与深度自检修复 ===${NC}"
     echo -e "1. 一键运行【全组件健康自检与未启动项目自动重装修复】"
     echo -e "2. 重启代理服务 (gost)"
-    echo -e "3. 重启 DNS 缓存服务 (dnsmasq) 并重新按域名测速优选 DNS"
+    echo -e "3. 重新采集各域名命中节点并测速锁定最快 IP"
     echo -e "4. 停止代理服务"
     echo -e "5. 开启代理服务"
     echo -e "0. 返回主菜单"
@@ -1654,11 +1674,11 @@ main_menu() {
     while true; do
         clear
         echo -e "${YELLOW}========================================================================${NC}"
-        echo -e "${GREEN}   晓林技术 - 亚马逊按域名动态优选 DNS 池与防关联管理面板 (旗舰版 v7.0)  ${NC}"
+        echo -e "${GREEN}   晓林技术 - 亚马逊命中节点测速锁定与防关联管理面板 (旗舰版 v7.1)      ${NC}"
         echo -e "${YELLOW}========================================================================${NC}"
-        echo -e " 1. ${GREEN}一键全自动部署 (按域名独立优选DNS池 + 修复dnsmasq + 全组件自检)${NC}"
-        echo -e " 2. ${CYAN}【一键无损升级 v7.0】(保留原端口密码 | 每个亚马逊域名自动选最快DNS)${NC}"
-        echo -e " 3. ${GREEN}【按域名独立优选 DNS 池与定时设置】(查看各域名DNS测速榜/10或20分钟优选)${NC}"
+        echo -e " 1. ${GREEN}一键全自动部署 (采集各域名命中节点 + 测速锁定最快IP + 全组件自检)${NC}"
+        echo -e " 2. ${CYAN}【一键无损升级 v7.1】(保留原端口密码 | 100%锁死各域名最快命中节点)${NC}"
+        echo -e " 3. ${GREEN}【按域名采集命中节点测速与定时设置】(查看命中节点榜/10或20分钟优选)${NC}"
         echo -e " 4. 修改 代理端口 / 账号 / 密码 (自动强开系统端口)"
         echo -e " 5. 【查询当前代理信息】(Socks5/HTTP 账号密码与指纹浏览器一键导入格式)"
         echo -e " 6. 【强行强开系统端口】(暴力释放占用 + 穿透系统防火墙)"
