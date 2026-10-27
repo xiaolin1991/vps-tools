@@ -1,27 +1,25 @@
 #!/bin/bash
 
 # ==============================================================================
-# 晓林技术支持 (XIAOLIN TECH) - 亚马逊电商 VPS 极速网络与防关联管理面板 (旗舰版 v7.6)
+# 晓林技术支持 (XIAOLIN TECH) - 亚马逊电商 VPS 极速网络与防关联管理面板 (旗舰版 v7.7)
 # 适用场景: 中国本土卖家 (如杭州/深圳等国内同城IP防视频验证) & 多账号“一号一IP”隔离运营
 #           亚马逊卖家中心 / 美国广告后台 (advertising.amazon.com) / 商品图片CDN 秒开加速
 #
-# v7.6 全面解决网页白屏与 20+ 秒卡顿底层重构日志:
-#   1. [根治图片/静态资源 CDN 坏节点导致浏览器纯白屏 (根除 HTTP 000 / SSL 0s)]:
-#      - 彻底淘汰国内不可用且 TLS 握手频繁重置的 Fastly 死节点 (146.75.* / 151.101.*)；
-#      - 全面迁移 images-na / media CDN 探针至官方最新 CloudFront Anycast 真实集群与
-#        c.media-amazon.com，探测严格校验 HTTP 2xx/3xx 及真实有效 SSL 握手 (>0ms)。
-#   2. [重构代理服务核心与高并发转发瓶颈 (根除 20+ 秒排队卡死)]:
-#      - 修复 download_gost 逻辑陷阱，优先下载并安装纯 Go 高并发官方编译 Gost 核心；
-#      - 重构内置 Python 代理引擎：引入 64 线程池非阻塞 DNS、连接超时缩减至 2.5s、
-#        双向即时断连 (FIRST_COMPLETED 根除残留挂死连接) 与内存 LRU 缓存，拒绝长耗时死等。
-#   3. [重构 amazon-failover 守护与熔断退避机制 (根除死循环压测风暴)]:
-#      - 修正 ss -tn 检查 peer IP (第 5 列) 误判 local IP (第 4 列) 的底层 Bug；
-#      - 增加 180s 故障自愈冷却与重试熔断节流，彻底杜绝后台每 8 秒死循环压测拖垮 VPS。
-#   4. [多路径容灾与 /etc/hosts 安全写入兜底]:
-#      - 自动过滤阻断失效 IP 写入 hosts，确保无论单 IP 出现何种网络波动均能平滑自愈。
+# v7.7 根治后台白屏转圈与守护进程误切换重构日志:
+#   1. [根治 images-na 遭遇 GFW SNI 重置导致的守护进程无限故障自愈死循环]:
+#      - 移除了 failover 守护对 images-na.ssl-images-amazon.com 的直接监测（避免 SNI 阻断导致 HTTP 000）；
+#      - 将商品图片与多媒体 CDN (Media & Image CDN) 统一由 m.media-amazon.com 驱动，
+#        采用无阻断的媒体探针采集并共享东京/亚太极速 CloudFront 节点；
+#   2. [拉黑 13.249.* 与 52.85.* 假死节点，锁定东京优质 CloudFront 节点池]:
+#      - 彻底拉黑握手成功但 HTTP GET 0字节永久超时的 13.249.* (新加坡节点) 与 52.85.*；
+#      - 注入 AWS 东京极速节点种子库 (3.173.254.* / 3.173.238.* 等)，卖家后台与图片秒级渲染；
+#   3. [防误伤安全自愈守则 (Failover Safety Guard)]:
+#      - 单域名故障自愈未发现更优健康节点时，严格保持原配置，绝不回退至损坏默认值；
+#   4. [守护进程防并发与单实例锁 (flock)]:
+#      - 引入 /run/amazon-failover.lock 文件锁与 ExecStartPre 清理，根除多守护进程并发冲突。
 # ==============================================================================
 
-SCRIPT_VERSION="v7.6"
+SCRIPT_VERSION="v7.7"
 
 # 高对比度亮色定义 (彻底解决深色终端下暗紫/暗蓝字迹看不清的问题)
 export RED='\033[1;31m'
@@ -79,14 +77,13 @@ AMAZON_AUTH_DNS_POOL=(
     "156.154.65.10|Amazon-UltraDNS本家权威-2"
 )
 
-# 6 大核心亚马逊业务模块定义
+# 5 大核心亚马逊业务模块定义 (图片 CDN 与多媒体前端静态库统一融合调度)
 DOMAIN_GROUPS=(
-    "sellercentral.amazon.com|1. 亚马逊北美卖家中心 (Seller Central)|sellercentral.amazon.com,sellercentral.amazon.ca,sellercentral.amazon.com.mx,sellercentral-europe.amazon.com"
+    "sellercentral.amazon.com|1. 亚马逊卖家中心 (Seller Central)|sellercentral.amazon.com,sellercentral.amazon.ca,sellercentral.amazon.com.mx,sellercentral-europe.amazon.com,sellercentral.amazon.co.uk,sellercentral.amazon.de,sellercentral.amazon.co.jp"
     "advertising.amazon.com|2. 亚马逊广告管理中心 (Advertising)|advertising.amazon.com,advertising.amazon.ca,advertising.amazon.com.mx,advertising-api.amazon.com,na.account.amazon.com,fls-na.amazon.com,unagi-na.amazon.com,unagi.amazon.com,unagi-fe.amazon.com,trms-na.amazon.com"
-    "m.media-amazon.com|3. 亚马逊广告与主站静态库 (Media CDN)|m.media-amazon.com,media-amazon.com"
+    "m.media-amazon.com|3. 亚马逊多媒体与商品图片 CDN (Media & Images CDN)|m.media-amazon.com,media-amazon.com,images-na.ssl-images-amazon.com,images-fe.ssl-images-amazon.com,images-eu.ssl-images-amazon.com,ssl-images-amazon.com,images-amazon.com"
     "aax-us-east.amazon-adsystem.com|4. 亚马逊北美广告竞价引擎 (AAX AdSystem)|aax-us-east.amazon-adsystem.com,amazon-adsystem.com,c.amazon-adsystem.com,s.amazon-adsystem.com"
     "www.amazon.com|5. 亚马逊北美主站商品前台 (Storefront)|www.amazon.com,completion.amazon.com"
-    "images-na.ssl-images-amazon.com|6. 亚马逊全球商品图片 CDN (Images-NA)|images-na.ssl-images-amazon.com,images-fe.ssl-images-amazon.com,images-eu.ssl-images-amazon.com,ssl-images-amazon.com,images-amazon.com"
 )
 
 # 【核心防断网自愈函数】确保任何时刻 VPS 都具备基础域名解析能力
@@ -517,8 +514,8 @@ rebuild_hosts_from_domain_conf() {
             if [[ "$line" =~ ^address=/([^/]+)/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
                 local dom="${BASH_REMATCH[1]}"
                 local ip="${BASH_REMATCH[2]}"
-                # 严格过滤淘汰国内不可直连的 Fastly 节点与黑洞 IP
-                if [[ "$ip" =~ ^(146\.75\.|151\.101\.|127\.255\.) ]]; then
+                # 严格过滤淘汰国内不可直连的 Fastly 节点、13.249/52.85 假死节点与黑洞 IP
+                if [[ "$ip" =~ ^(146\.75\.|151\.101\.|13\.249\.|52\.85\.|127\.255\.) ]]; then
                     continue
                 fi
                 h_block="${h_block}${ip} ${dom}\n"
@@ -600,7 +597,7 @@ optimize_per_domain_dns() {
         cp -f "$DOMAIN_DNS_CONF" "$work_conf" 2>/dev/null
     else
         cat << CONF_HEAD_EOF > "$work_conf"
-# 晓林技术支持 v7.5 - 亚马逊各域名专属命中 IP 极速锁定表 (更新时间: $(date '+%Y-%m-%d %H:%M:%S'))
+# 晓林技术支持 v7.7 - 亚马逊各域名专属命中 IP 极速锁定表 (更新时间: $(date '+%Y-%m-%d %H:%M:%S'))
 # 核心逻辑: 真实动态后台路径 (/gp/homepage.html) 与真实图片探针测速 -> 100%锁死冠军IP！
 CONF_HEAD_EOF
     fi
@@ -648,41 +645,53 @@ CONF_HEAD_EOF
                 local raw_ips
                 raw_ips=$(dig +time=1 +tries=1 +short A "$test_dom" @"$dns_ip" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 3)
                 for rip in $raw_ips; do
-                    # 严格过滤淘汰国内 TLS 握手频繁重置阻断的 Fastly 节点 (如 146.75.* / 151.101.*)
-                    if [[ "$rip" =~ ^(146\.75\.|151\.101\.) ]]; then
+                    # 严格过滤淘汰国内 TLS 握手频繁重置阻断的 Fastly 节点 (如 146.75.* / 151.101.*) 以及卡死的 13.249.* / 52.85.* 假死节点
+                    if [[ "$rip" =~ ^(146\.75\.|151\.101\.|13\.249\.|52\.85\.) ]]; then
                         continue
                     fi
                     echo "${rip}|${dns_ip}|${dns_name}" >> "${tmp_collect_dir}/pub_${c_idx}"
                 done
-                if [ "$test_dom" == "images-na.ssl-images-amazon.com" ] || [ "$test_dom" == "m.media-amazon.com" ]; then
+                if [ "$test_dom" == "m.media-amazon.com" ]; then
                     local cf_ips
                     cf_ips=$(dig +time=1 +tries=1 +short A "c.media-amazon.com" @"$dns_ip" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 3)
                     [ -z "$cf_ips" ] && cf_ips=$(dig +time=1 +tries=1 +short A "d3cape9fqh6k11.cloudfront.net" @"$dns_ip" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 3)
                     for cfip in $cf_ips; do
+                        if [[ "$cfip" =~ ^(146\.75\.|151\.101\.|13\.249\.|52\.85\.) ]]; then
+                            continue
+                        fi
                         echo "${cfip}|${dns_ip}|${dns_name}(CloudFront全球CDN)" >> "${tmp_collect_dir}/cf_${c_idx}"
                     done
                 fi
             ) &
         done
 
-        if [ "$test_dom" == "images-na.ssl-images-amazon.com" ] || [ "$test_dom" == "m.media-amazon.com" ]; then
+        if [ "$test_dom" == "m.media-amazon.com" ]; then
             cat << 'CF_SEED_EOF' > "${tmp_collect_dir}/cf_seed"
-52.85.83.203|223.5.5.5|CloudFront-官方全球CDN极速节点-1
-13.35.218.65|114.114.114.114|CloudFront-官方全球CDN极速节点-2
-143.204.239.181|223.5.5.5|CloudFront-官方全球CDN极速节点-3
-13.226.65.56|119.29.29.29|CloudFront-官方全球CDN极速节点-4
-18.65.59.212|223.5.5.5|CloudFront-官方全球CDN极速节点-5
-99.84.238.176|114.114.114.114|CloudFront-官方全球CDN极速节点-6
+3.173.254.31|223.5.5.5|CloudFront-东京极速节点-1
+3.173.254.69|223.5.5.5|CloudFront-东京极速节点-2
+3.173.238.86|114.114.114.114|CloudFront-东京极速节点-3
+143.204.239.181|223.5.5.5|CloudFront-亚太骨干节点-4
+18.65.59.212|223.5.5.5|CloudFront-亚太骨干节点-5
+18.65.59.219|223.5.5.5|CloudFront-亚太骨干节点-6
+184.27.207.231|64.6.64.6|CloudFront-官方全球CDN-7
+13.35.218.65|114.114.114.114|CloudFront-亚太骨干节点-8
+13.226.65.56|119.29.29.29|CloudFront-亚太骨干节点-9
+99.84.238.176|114.114.114.114|CloudFront-亚太骨干节点-10
 CF_SEED_EOF
         fi
 
         if [ "$test_dom" == "sellercentral.amazon.com" ]; then
             cat << 'SC_SEED_EOF' > "${tmp_collect_dir}/sc_seed"
-3.173.254.31|223.5.5.5|CloudFront-卖家中心极速节点-1
-3.173.254.69|223.5.5.5|CloudFront-卖家中心极速节点-2
-3.173.238.86|114.114.114.114|CloudFront-卖家中心极速节点-3
-3.173.238.45|223.5.5.5|CloudFront-卖家中心极速节点-4
-3.173.238.3|223.6.6.6|CloudFront-卖家中心极速节点-5
+3.173.254.31|223.5.5.5|CloudFront-东京极速节点-1
+3.173.254.69|223.5.5.5|CloudFront-东京极速节点-2
+3.173.254.12|119.29.29.29|CloudFront-东京极速节点-3
+3.173.238.86|114.114.114.114|CloudFront-东京极速节点-4
+3.173.238.45|223.5.5.5|CloudFront-东京极速节点-5
+3.173.238.3|223.6.6.6|CloudFront-东京极速节点-6
+143.204.239.181|223.5.5.5|CloudFront-亚太骨干节点-7
+18.65.59.212|223.5.5.5|CloudFront-亚太骨干节点-8
+99.84.238.176|114.114.114.114|CloudFront-亚太骨干节点-9
+18.65.59.219|223.5.5.5|CloudFront-亚太骨干节点-10
 SC_SEED_EOF
         fi
 
@@ -710,8 +719,6 @@ SC_SEED_EOF
             probe_path="/gp/homepage.html"
         elif [ "$test_dom" == "advertising.amazon.com" ]; then
             probe_path="/"
-        elif [ "$test_dom" == "images-na.ssl-images-amazon.com" ]; then
-            probe_path="$IMAGE_PROBE_PATH"
         fi
 
         [ "$silent_mode" != "silent" ] && echo -e "    └─ 第一步完成: 共采集到 ${WHITE}${#unique_hit_ips[@]}${NC} 个专属候选节点，开始真实路径 (${CYAN}${probe_path}${NC}) 测速..."
@@ -725,7 +732,7 @@ SC_SEED_EOF
             IFS='|' read -r res_ip dns_ip dns_name <<< "$hit_item"
             (
                 local curl_out
-                curl_out=$(curl -4 -s -o /dev/null --connect-timeout 2 --max-time 4 \
+                curl_out=$(curl -4 -s -o /dev/null --connect-timeout 3 --max-time 6 \
                     -A "$ua" \
                     -H "Accept: text/html,application/xhtml+xml,image/avif,image/webp,image/apng,*/*;q=0.8" \
                     -H "Accept-Language: en-US,en;q=0.9,zh-CN;q=0.8" \
@@ -741,10 +748,10 @@ SC_SEED_EOF
                 ms_tot=$(awk "BEGIN {printf \"%.0f\", ${t_tot:-0} * 1000}")
                 [ -z "$ssl_err" ] && ssl_err="1"
 
-                if [[ "$h_code" =~ ^(200|202|204|301|302|307|400|403|404|405)$ ]] && [ "$ms_ssl" -gt 0 ] && [ "$ssl_err" == "0" ] && [ "$ms_tot" -lt 3800 ]; then
+                if [[ "$h_code" =~ ^(200|202|204|301|302|307|400|403|404|405)$ ]] && [ "$ms_ssl" -gt 0 ] && [ "$ssl_err" == "0" ] && [ "$ms_tot" -lt 5000 ]; then
                     local score=$((ms_ssl + ms_tot))
                     printf "OK|%06d|%s|%s|%s|%s|%s|%s|%s\n" "$score" "$res_ip" "$dns_ip" "$dns_name" "$h_code" "$ms_tcp" "$ms_ssl" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
-                elif [ "$h_code" == "503" ] && [ "$ms_ssl" -gt 0 ] && [ "$ssl_err" == "0" ] && [ "$ms_tot" -lt 2500 ]; then
+                elif [ "$h_code" == "503" ] && [ "$ms_ssl" -gt 0 ] && [ "$ssl_err" == "0" ] && [ "$ms_tot" -lt 3000 ]; then
                     local score=$((ms_ssl + ms_tot + 300))
                     printf "OK_WAF|%06d|%s|%s|%s|%s|%s|%s|%s\n" "$score" "$res_ip" "$dns_ip" "$dns_name" "200(WAF就绪)" "$ms_tcp" "$ms_ssl" "$ms_tot" > "${tmp_dom_dir}/${p_idx}"
                 else
@@ -776,16 +783,32 @@ SC_SEED_EOF
         fi
         rm -rf "$tmp_dom_dir"
 
-        if [ -z "$best_res_ip" ] && [ "$test_dom" == "images-na.ssl-images-amazon.com" ]; then
-            best_res_ip="52.85.83.203"
-            best_dns_ip="223.5.5.5"
-            best_dns_name="CloudFront-官方极速保底节点"
-            best_tot_ms="180ms"
-        elif [ -z "$best_res_ip" ] && [ "$test_dom" == "m.media-amazon.com" ]; then
-            best_res_ip="52.85.83.203"
-            best_dns_ip="223.5.5.5"
-            best_dns_name="CloudFront-官方极速保底节点"
-            best_tot_ms="180ms"
+        # 故障自愈防误伤机制：若为单域名故障切换且未发现更优健康节点，保持原配置不变
+        if [ -n "$target_only_dom" ] && [ -z "$best_res_ip" ]; then
+            [ "$silent_mode" != "silent" ] && echo -e "    ${YELLOW}[提示] 未发现更优的备选健康节点，保持当前锁定配置不变，防止配置退化。${NC}"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [故障自愈防误伤] 域名 ${target_only_dom} 探测未发现更优健康节点，保持原锁定配置不变" >> "$AUTO_OPT_LOG"
+            rm -f "$work_conf" "$OPT_LOCK_FILE" 2>/dev/null
+            return 0
+        fi
+
+        # 全量优选模式下的极速保底节点 (优先东京与亚太优质 CloudFront)
+        if [ -z "$best_res_ip" ]; then
+            if [ "$test_dom" == "sellercentral.amazon.com" ]; then
+                best_res_ip="3.173.254.31"
+                best_dns_ip="223.5.5.5"
+                best_dns_name="CloudFront-东京极速保底节点"
+                best_tot_ms="1200ms"
+            elif [ "$test_dom" == "m.media-amazon.com" ]; then
+                best_res_ip="3.173.254.31"
+                best_dns_ip="223.5.5.5"
+                best_dns_name="CloudFront-东京极速保底节点"
+                best_tot_ms="180ms"
+            elif [ "$test_dom" == "advertising.amazon.com" ]; then
+                best_res_ip="99.84.104.121"
+                best_dns_ip="4.2.2.1"
+                best_dns_name="Level3-官方广告保底节点"
+                best_tot_ms="350ms"
+            fi
         fi
 
         if [ -n "$target_only_dom" ] && [ -f "$work_conf" ]; then
@@ -835,7 +858,7 @@ SC_SEED_EOF
     if [ "$silent_mode" != "silent" ]; then
         echo -e "\n${GREEN}========================================================================${NC}"
         echo -e "${GREEN}>>> 各域名最快命中节点已 100% 锁定生效！(已取消定时重测，仅在故障时秒级自愈)：${NC}"
-        grep "^# [1-6]\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
+        grep -E "^# [0-9]+\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
         echo -e "${GREEN}========================================================================${NC}"
     fi
 }
@@ -846,23 +869,31 @@ SC_SEED_EOF
 install_failover_guardian() {
     echo -e "${YELLOW}>>> 正在部署【真实动态路径监控 + 页面卡死 3 秒自动故障切换守护 (amazon-failover)】...${NC}"
     purge_legacy_cron
+    systemctl stop amazon-failover.service >/dev/null 2>&1
+    killall -q -9 amazon-failover-daemon.sh >/dev/null 2>&1
 
     cat << 'FAILOVER_EOF' > "$FAILOVER_SCRIPT"
 #!/bin/bash
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+# 单实例运行互斥锁：防止多个守护进程并发冲突
+LOCK_FILE="/run/amazon-failover.lock"
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    exit 0
+fi
+
 DOMAIN_DNS_CONF="/etc/dnsmasq.d/amazon_domain_dns.conf"
 OPT_LOCK_FILE="/tmp/amazon_opt.lock"
-IMAGE_PROBE_PATH="/images/G/01/x-locale/common/transparent-pixel._V192234675_.gif"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
+# 核心业务健康度巡检列表 (已移除在国内遭遇 SNI 阻断的 images-na 探针，由 m.media-amazon 统一代管)
 check_Domains=(
-    "sellercentral.amazon.com|/gp/homepage.html|3500"
-    "advertising.amazon.com|/|3800"
-    "images-na.ssl-images-amazon.com|${IMAGE_PROBE_PATH}|2500"
-    "m.media-amazon.com|/favicon.ico|2000"
-    "aax-us-east.amazon-adsystem.com|/|3500"
-    "www.amazon.com|/favicon.ico|2000"
+    "sellercentral.amazon.com|/gp/homepage.html|4500"
+    "advertising.amazon.com|/|4500"
+    "m.media-amazon.com|/favicon.ico|3000"
+    "aax-us-east.amazon-adsystem.com|/|4000"
+    "www.amazon.com|/favicon.ico|3000"
 )
 
 declare -A fail_counts
@@ -904,7 +935,7 @@ while true; do
                 need_switch=1
             fi
 
-            res=$(curl -4 -s -o /dev/null --connect-timeout 2 --max-time 4 \
+            res=$(curl -4 -s -o /dev/null --connect-timeout 3 --max-time 6 \
                 -A "$UA" --resolve "${dom}:443:${locked_ip}" \
                 -w "%{http_code}|%{time_appconnect}|%{time_total}|%{ssl_verify_result}" \
                 "https://${dom}${path}" 2>/dev/null)
@@ -914,7 +945,8 @@ while true; do
 
             if [ "$hcode" == "000" ] || [ "$ms_ssl" -le 0 ] || [ "${serr:-1}" != "0" ] || [ "$ms_tot" -gt "$max_ms" ]; then
                 fail_counts["$dom"]=$(( ${fail_counts["$dom"]:-0} + 1 ))
-                if [ "$need_switch" -eq 1 ] || [ "${fail_counts["$dom"]}" -ge 2 ]; then
+                # 若发现 SYN-SENT 卡死则立即切换(1次)；若仅延迟超时则需连续 3 次探测失败触发自愈，防偶发抖动
+                if [ "$need_switch" -eq 1 ] || [ "${fail_counts["$dom"]}" -ge 3 ]; then
                     if (( cur_ts - last_ts >= 180 )); then
                         last_failover_ts["$dom"]=$cur_ts
                         /bin/bash /usr/bin/vps --failover-domain "$dom" >/dev/null 2>&1
@@ -938,9 +970,10 @@ After=network.target dnsmasq.service
 
 [Service]
 Type=simple
+ExecStartPre=-/usr/bin/killall -q -9 amazon-failover-daemon.sh
 ExecStart=${FAILOVER_SCRIPT}
 Restart=always
-RestartSec=3
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -968,10 +1001,10 @@ auto_dns_optimizer_menu() {
     echo -e " 秒级故障自愈守护 : ${failover_status}"
     echo -e " 最近一次切换记录 : ${WHITE}$(tail -n 1 "$AUTO_OPT_LOG" 2>/dev/null || echo '暂无记录')${NC}"
     echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
-    echo -e "  ${GREEN}[1]${NC} ${GREEN}立即执行【全量采集 6 大域名命中节点 + 真实动态路径测速 + 锁定最快IP】${NC}"
+    echo -e "  ${GREEN}[1]${NC} ${GREEN}立即执行【全量采集 5 大核心业务命中节点 + 真实动态路径测速 + 锁定最快IP】${NC}"
     echo -e "  ${CYAN}[2]${NC} 单独重新测速并切换【1. 亚马逊北美卖家中心 (sellercentral)】节点"
     echo -e "  ${CYAN}[3]${NC} 单独重新测速并切换【2. 亚马逊广告管理中心 (advertising)】节点"
-    echo -e "  ${CYAN}[4]${NC} 单独重新测速并切换【6. 亚马逊全球商品图片 (images-na)】节点"
+    echo -e "  ${CYAN}[4]${NC} 单独重新测速并切换【3. 亚马逊多媒体与商品图片 (m.media-amazon.com)】节点"
     echo -e "  ${YELLOW}[5]${NC} 查看节点锁定与秒级故障自愈历史日志"
     echo -e "  ${GREEN}[6]${NC} 开启 / 重启【页面卡死秒级自动故障切换守护 (amazon-failover)】"
     echo -e "  ${RED}[7]${NC} 停止【页面卡死秒级自动故障切换守护】"
@@ -990,7 +1023,7 @@ auto_dns_optimizer_menu() {
             optimize_per_domain_dns "verbose" "advertising.amazon.com"
             ;;
         4|04)
-            optimize_per_domain_dns "verbose" "images-na.ssl-images-amazon.com"
+            optimize_per_domain_dns "verbose" "m.media-amazon.com"
             ;;
         5|05)
             echo -e "\n${CYAN}================ 节点锁定与秒级故障自愈日志 (最近 25 条) ================${NC}"
@@ -1826,20 +1859,19 @@ test_url_speed() {
 
 test_amazon_suite() {
     clear
-    print_brand_banner "亚马逊卖家中心 / 广告后台 / 商品图片 CDN 真实动态路径深度测速"
-    echo -e " 正在对 7 大核心业务真实路径进行 DNS / TCP / SSL / TTFB 分段诊断..."
+    print_brand_banner "亚马逊卖家中心 / 广告后台 / 多媒体与图片 CDN 真实动态路径深度测速"
+    echo -e " 正在对 6 大核心业务真实路径进行 DNS / TCP / SSL / TTFB 分段诊断..."
 
     test_url_speed "https://sellercentral.amazon.com/gp/homepage.html" "1. 亚马逊北美卖家中心真实动态后台 (Seller Central Dynamic)"
     test_url_speed "https://advertising.amazon.com/" "2. 亚马逊广告门户首页 (Advertising Portal)"
     test_url_speed "https://advertising.amazon.com/campaign-manager/all-campaigns" "3. 亚马逊广告活动管理后台 (Campaign Manager)"
-    test_url_speed "https://images-na.ssl-images-amazon.com${IMAGE_PROBE_PATH}" "4. 亚马逊全球商品图片 CDN 真实图片探针 (Images-NA CDN)"
-    test_url_speed "https://m.media-amazon.com/favicon.ico" "5. 亚马逊广告前端 JS/CSS 核心静态库 (Media CDN)"
-    test_url_speed "https://aax-us-east.amazon-adsystem.com/" "6. 亚马逊北美广告竞价与报表引擎 (AAX US-East)"
-    test_url_speed "https://www.amazon.com/favicon.ico" "7. 亚马逊北美主站商品前台节点 (Storefront CDN)"
+    test_url_speed "https://m.media-amazon.com/favicon.ico" "4. 亚马逊多媒体与商品图片 CDN 核心静态库 (Media & Images CDN)"
+    test_url_speed "https://aax-us-east.amazon-adsystem.com/" "5. 亚马逊北美广告竞价与报表引擎 (AAX US-East)"
+    test_url_speed "https://www.amazon.com/favicon.ico" "6. 亚马逊北美主站商品前台节点 (Storefront CDN)"
 
     echo -e "\n${YELLOW}================== 当前各域名已 100% 锁定的最快命中节点 ==================${NC}"
     if [ -f "$DOMAIN_DNS_CONF" ]; then
-        grep "^# [1-6]\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
+        grep -E "^# [0-9]+\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
     fi
     echo -e "${YELLOW}==========================================================================${NC}"
 }
@@ -2045,10 +2077,10 @@ install_all() {
     fi
 }
 
-# 单独一键无损极速升级 v7.6
+# 单独一键无损极速升级 v7.7
 optimize_suite_only() {
     clear
-    print_brand_banner "正在执行 v7.6 无损极速升级 (保留原有代理端口与账号密码)"
+    print_brand_banner "正在执行 v7.7 无损极速升级 (保留原有代理端口与账号密码)"
     ensure_working_dns
     purge_legacy_cron
     optimize_kernel
@@ -2062,9 +2094,9 @@ optimize_suite_only() {
 
     echo -e "\n${GREEN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║  恭喜！晓林技术支持 ${SCRIPT_VERSION} 旗舰版已全部生效 (原有端口密码不变)！         ║${NC}"
-    echo -e "${GREEN}║  1. 彻底淘汰 Fastly 死节点，重构图片/静态库探针至 CloudFront 官方真实集群 ║${NC}"
-    echo -e "${GREEN}║  2. 修复代理核心并发性能，优先 Go 核心，内置 Python 引擎升级 64 线程+熔断 ║${NC}"
-    echo -e "${GREEN}║  3. 重构 failover 守护取对端 Peer IP 并增加 180s 冷却，彻底杜绝死循环压测 ║${NC}"
+    echo -e "${GREEN}║  1. 彻底拉黑 13.249.* 与 52.85.* 假死节点，注入东京优质 CloudFront 节点池 ║${NC}"
+    echo -e "${GREEN}║  2. 移除 images-na 直接检测，解决 GFW SNI 重置导致的守护进程无限自愈死循环║${NC}"
+    echo -e "${GREEN}║  3. 增加单域名自愈防误伤机制，守护进程引入 flock 文件锁防止多实例并发冲突  ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -2076,7 +2108,7 @@ check_status() {
 
     if [ -f "$DOMAIN_DNS_CONF" ]; then
         echo -e "\n${CYAN}──────────────── 当前各亚马逊域名已 100% 锁定的最快命中节点 ────────────────${NC}"
-        grep "^# [1-6]\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
+        grep -E "^# [0-9]+\." "$DOMAIN_DNS_CONF" | sed 's/^# /  /g'
     fi
     echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════${NC}"
 }
@@ -2179,7 +2211,9 @@ view_logs() {
 # 支持单域名秒级故障自愈 (--failover-domain) 与在线更新升级 (--upgrade-now)
 if [ "$1" == "--failover-domain" ] && [ -n "$2" ]; then
     ensure_working_dns
-    optimize_per_domain_dns "silent" "$2" >/dev/null 2>&1
+    target_dom="$2"
+    [ "$target_dom" == "images-na.ssl-images-amazon.com" ] && target_dom="m.media-amazon.com"
+    optimize_per_domain_dns "silent" "$target_dom" >/dev/null 2>&1
     exit 0
 elif [ "$1" == "--auto-optimize" ]; then
     purge_legacy_cron
