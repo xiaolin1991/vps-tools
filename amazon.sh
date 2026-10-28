@@ -76,9 +76,9 @@ AMAZON_AUTH_DNS_POOL=(
 # 5 大核心亚马逊业务模块定义 (图片 CDN 与多媒体前端静态库统一融合调度)
 DOMAIN_GROUPS=(
     "sellercentral.amazon.com|1. 亚马逊卖家中心 (Seller Central)|sellercentral.amazon.com,sellercentral.amazon.ca,sellercentral.amazon.com.mx,sellercentral-europe.amazon.com,sellercentral.amazon.co.uk,sellercentral.amazon.de,sellercentral.amazon.co.jp"
-    "advertising.amazon.com|2. 亚马逊广告管理中心 (Advertising)|advertising.amazon.com,advertising.amazon.ca,advertising.amazon.com.mx,advertising-api.amazon.com,na.account.amazon.com,fls-na.amazon.com,unagi-na.amazon.com,unagi.amazon.com,unagi-fe.amazon.com,trms-na.amazon.com"
+    "advertising.amazon.com|2. 亚马逊广告管理中心 (Advertising)|advertising.amazon.com,advertising.amazon.ca,advertising.amazon.com.mx,advertising-api.amazon.com"
     "m.media-amazon.com|3. 亚马逊多媒体与商品图片 CDN (Media & Images CDN)|m.media-amazon.com,media-amazon.com,images-na.ssl-images-amazon.com,images-fe.ssl-images-amazon.com,images-eu.ssl-images-amazon.com,ssl-images-amazon.com,images-amazon.com"
-    "aax-us-east.amazon-adsystem.com|4. 亚马逊北美广告竞价引擎 (AAX AdSystem)|aax-us-east.amazon-adsystem.com,amazon-adsystem.com,c.amazon-adsystem.com,s.amazon-adsystem.com"
+    "aax-us-east.amazon-adsystem.com|4. 亚马逊北美广告竞价引擎 (AAX AdSystem)|aax-us-east.amazon-adsystem.com,c.amazon-adsystem.com,s.amazon-adsystem.com"
     "www.amazon.com|5. 亚马逊北美主站商品前台 (Storefront)|www.amazon.com,completion.amazon.com"
 )
 
@@ -112,6 +112,13 @@ purge_legacy_cron() {
 sync_shortcut() {
     ensure_working_dns
     purge_legacy_cron
+    # 清理旧版遗留的非 CDN 鉴权中心与动态事件源站解析 (防止登录亚马逊遭遇 502 CloudFront 报错)
+    if [ -f "$DOMAIN_DNS_CONF" ]; then
+        if grep -qE "(na\.account|fls-na|unagi|trms-na|amazon-adsystem\.com)" "$DOMAIN_DNS_CONF" 2>/dev/null; then
+            sed -i -E '/(na\.account|fls-na|unagi|trms-na|amazon-adsystem\.com)/d' "$DOMAIN_DNS_CONF" /etc/hosts 2>/dev/null
+            systemctl restart dnsmasq >/dev/null 2>&1
+        fi
+    fi
     local self_path
     self_path=$(readlink -f "$0" 2>/dev/null || echo "$0")
     if [ -f "$self_path" ] && [ "$self_path" != "/usr/bin/vps" ]; then
@@ -518,8 +525,8 @@ rebuild_hosts_from_domain_conf() {
             if [[ "$line" =~ ^address=/([^/]+)/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
                 local dom="${BASH_REMATCH[1]}"
                 local ip="${BASH_REMATCH[2]}"
-                # 严格过滤淘汰国内不可直连的 Fastly 节点、13.249/52.85 假死节点与黑洞 IP
-                if [[ "$ip" =~ ^(146\.75\.|151\.101\.|13\.249\.|52\.85\.|127\.255\.) ]]; then
+                # 严格过滤淘汰国内不可直连的 Fastly 节点、13.249/52.85 假死节点与黑洞 IP，以及非 CDN 鉴权源站
+                if [[ "$ip" =~ ^(146\.75\.|151\.101\.|13\.249\.|52\.85\.|127\.255\.) ]] || [[ "$dom" =~ (na\.account|fls-na|unagi|trms-na|amazon-adsystem\.com) ]]; then
                     continue
                 fi
                 h_block="${h_block}${ip} ${dom}\n"
