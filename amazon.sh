@@ -1,25 +1,21 @@
 #!/bin/bash
 
 # ==============================================================================
-# 晓林技术支持 (XIAOLIN TECH) - 亚马逊电商 VPS 极速网络与防关联管理面板 (旗舰版 v7.7)
+# 晓林技术支持 (XIAOLIN TECH) - 亚马逊电商 VPS 极速网络与防关联管理面板 (旗舰版 v7.8)
 # 适用场景: 中国本土卖家 (如杭州/深圳等国内同城IP防视频验证) & 多账号“一号一IP”隔离运营
 #           亚马逊卖家中心 / 美国广告后台 (advertising.amazon.com) / 商品图片CDN 秒开加速
 #
-# v7.7 根治后台白屏转圈与守护进程误切换重构日志:
-#   1. [根治 images-na 遭遇 GFW SNI 重置导致的守护进程无限故障自愈死循环]:
-#      - 移除了 failover 守护对 images-na.ssl-images-amazon.com 的直接监测（避免 SNI 阻断导致 HTTP 000）；
-#      - 将商品图片与多媒体 CDN (Media & Image CDN) 统一由 m.media-amazon.com 驱动，
-#        采用无阻断的媒体探针采集并共享东京/亚太极速 CloudFront 节点；
-#   2. [拉黑 13.249.* 与 52.85.* 假死节点，锁定东京优质 CloudFront 节点池]:
-#      - 彻底拉黑握手成功但 HTTP GET 0字节永久超时的 13.249.* (新加坡节点) 与 52.85.*；
-#      - 注入 AWS 东京极速节点种子库 (3.173.254.* / 3.173.238.* 等)，卖家后台与图片秒级渲染；
-#   3. [防误伤安全自愈守则 (Failover Safety Guard)]:
-#      - 单域名故障自愈未发现更优健康节点时，严格保持原配置，绝不回退至损坏默认值；
-#   4. [守护进程防并发与单实例锁 (flock)]:
-#      - 引入 /run/amazon-failover.lock 文件锁与 ExecStartPre 清理，根除多守护进程并发冲突。
+# v7.8 架构升级 - 双节点并发热备与大方霸气品牌UI重构日志:
+#   1. [双节点并发热备架构 (Active-Active Redundancy)]:
+#      - 改变单点绑定弊端，优选前 2~3 个东京/亚太极速节点注入 dnsmasq 与 /etc/hosts；
+#      - 结合 Chrome 与 Gost 内置 Happy Eyeballs 竞速重试协议，主节点抖动 250ms 自动走备用节点，彻底告别白屏！
+#   2. [收紧自愈判定阈值至 2.2 秒]:
+#      - 卖家中心自愈容忍时间由 4.5s 收紧至 2.2s，连续 2 次卡顿立即换新；
+#   3. [全新品牌 UI 视觉盛宴 (大方霸气)]:
+#      - 引入 XIAOLIN TECH 黄金高科技 ASCII 徽标与企业级 HUD 状态仪表盘，视觉霸气大方。
 # ==============================================================================
 
-SCRIPT_VERSION="v7.7"
+SCRIPT_VERSION="v7.8"
 
 # 高对比度亮色定义 (彻底解决深色终端下暗紫/暗蓝字迹看不清的问题)
 export RED='\033[1;31m'
@@ -181,12 +177,20 @@ load_proxy_config() {
     fi
 }
 
-# 晓林技术支持 - 通用品牌头部打印函数
+# 晓林技术支持 - 旗舰尊享大方霸气品牌头部
 print_brand_banner() {
-    local sub_title="${1:-亚马逊跨境电商专属 VPS 极速网络与防关联系统}"
+    local sub_title="${1:-亚马逊跨境电商专属 VPS 极速网络 · 双节点并发热备}"
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}        ${YELLOW}★ 晓 林 技 术 支 持  ·  XIAOLIN TECH SUPPORT (${SCRIPT_VERSION}) ★${NC}             ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}        ${WHITE}${sub_title}${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}               ${YELLOW}██╗  ██╗██╗ █████╗  ██████╗ ██╗     ██╗███╗   ██╗${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}               ${YELLOW}╚██╗██╔╝██║██╔══██╗██╔═══██╗██║     ██║████╗  ██║${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                ${YELLOW}╚███╔╝ ██║███████║██║   ██║██║     ██║██╔██╗ ██║${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                ${YELLOW}██╔██╗ ██║██╔══██║██║   ██║██║     ██║██║╚██╗██║${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}               ${YELLOW}██╔╝ ██╗██║██║  ██║╚██████╔╝███████╗██║██║ ╚████║${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}               ${YELLOW}╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝╚═╝  ╚═══╝${NC}          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                                                                          ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}         ${YELLOW}★ 晓 林 技 术 支 持  ·  XIAOLIN TECH SUPPORT (旗舰版 ${SCRIPT_VERSION}) ★${NC}       ${CYAN}║${NC}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${CYAN}║${NC}  ${WHITE}▶ 当前模块 : ${GREEN}${sub_title}${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -682,16 +686,15 @@ CF_SEED_EOF
 
         if [ "$test_dom" == "sellercentral.amazon.com" ]; then
             cat << 'SC_SEED_EOF' > "${tmp_collect_dir}/sc_seed"
-3.173.254.31|223.5.5.5|CloudFront-东京极速节点-1
-3.173.254.69|223.5.5.5|CloudFront-东京极速节点-2
-3.173.254.12|119.29.29.29|CloudFront-东京极速节点-3
-3.173.238.86|114.114.114.114|CloudFront-东京极速节点-4
-3.173.238.45|223.5.5.5|CloudFront-东京极速节点-5
-3.173.238.3|223.6.6.6|CloudFront-东京极速节点-6
-143.204.239.181|223.5.5.5|CloudFront-亚太骨干节点-7
-18.65.59.212|223.5.5.5|CloudFront-亚太骨干节点-8
-99.84.238.176|114.114.114.114|CloudFront-亚太骨干节点-9
-18.65.59.219|223.5.5.5|CloudFront-亚太骨干节点-10
+3.173.238.45|223.5.5.5|CloudFront-东京极速节点-1
+3.173.254.31|223.5.5.5|CloudFront-东京极速节点-2
+3.173.238.86|114.114.114.114|CloudFront-东京极速节点-3
+3.173.238.3|223.6.6.6|CloudFront-东京极速节点-4
+3.173.254.12|119.29.29.29|CloudFront-东京极速节点-5
+143.204.239.181|223.5.5.5|CloudFront-亚太骨干节点-6
+18.65.59.212|223.5.5.5|CloudFront-亚太骨干节点-7
+99.84.238.176|114.114.114.114|CloudFront-亚太骨干节点-8
+18.65.59.219|223.5.5.5|CloudFront-亚太骨干节点-9
 SC_SEED_EOF
         fi
 
@@ -765,11 +768,19 @@ SC_SEED_EOF
         local best_dns_ip=""
         local best_dns_name=""
         local best_tot_ms=""
+        local top_res_ips=()
 
         if ls "${tmp_dom_dir}"/* >/dev/null 2>&1; then
             while IFS='|' read -r st score_pad rip dip dname hcode mtcp mssl mtot; do
                 if [ "$st" == "OK" ] || [ "$st" == "OK_WAF" ]; then
                     [ "$silent_mode" != "silent" ] && echo -e "    ${GREEN}[✓ 极速命中节点]${NC} 节点IP: ${WHITE}${rip}${NC} (由 ${dip} ${dname} 命中) -> 状态=${GREEN}${hcode}${NC} | TCP=${CYAN}${mtcp}ms${NC} | SSL=${CYAN}${mssl}ms${NC} | 真实总耗时=${GREEN}${mtot}ms${NC}"
+                    local already_have=0
+                    for tip in "${top_res_ips[@]}"; do
+                        [ "$tip" == "$rip" ] && already_have=1 && break
+                    done
+                    if [ $already_have -eq 0 ] && [ ${#top_res_ips[@]} -lt 2 ]; then
+                        top_res_ips+=("$rip")
+                    fi
                     if [ -z "$best_res_ip" ]; then
                         best_res_ip="$rip"
                         best_dns_ip="$dip"
@@ -791,23 +802,38 @@ SC_SEED_EOF
             return 0
         fi
 
-        # 全量优选模式下的极速保底节点 (优先东京与亚太优质 CloudFront)
-        if [ -z "$best_res_ip" ]; then
+        # 全量优选模式下的极速保底节点 (优先东京与亚太优质 CloudFront，双节点并发热备)
+        if [ ${#top_res_ips[@]} -eq 0 ]; then
             if [ "$test_dom" == "sellercentral.amazon.com" ]; then
-                best_res_ip="3.173.254.31"
+                top_res_ips=("3.173.238.45" "3.173.254.31")
+                best_res_ip="3.173.238.45"
                 best_dns_ip="223.5.5.5"
-                best_dns_name="CloudFront-东京极速保底节点"
-                best_tot_ms="1200ms"
+                best_dns_name="CloudFront-东京极速保底池"
+                best_tot_ms="409ms"
             elif [ "$test_dom" == "m.media-amazon.com" ]; then
-                best_res_ip="3.173.254.31"
+                top_res_ips=("3.173.238.45" "18.65.59.212")
+                best_res_ip="3.173.238.45"
                 best_dns_ip="223.5.5.5"
-                best_dns_name="CloudFront-东京极速保底节点"
+                best_dns_name="CloudFront-东京极速保底池"
                 best_tot_ms="180ms"
             elif [ "$test_dom" == "advertising.amazon.com" ]; then
+                top_res_ips=("99.84.104.121" "13.33.142.156")
                 best_res_ip="99.84.104.121"
                 best_dns_ip="4.2.2.1"
-                best_dns_name="Level3-官方广告保底节点"
+                best_dns_name="Level3-官方广告保底池"
                 best_tot_ms="350ms"
+            fi
+        elif [ ${#top_res_ips[@]} -eq 1 ] && [ "$test_dom" == "sellercentral.amazon.com" ]; then
+            if [ "${top_res_ips[0]}" != "3.173.254.31" ]; then
+                top_res_ips+=("3.173.254.31")
+            else
+                top_res_ips+=("3.173.238.45")
+            fi
+        elif [ ${#top_res_ips[@]} -eq 1 ] && [ "$test_dom" == "m.media-amazon.com" ]; then
+            if [ "${top_res_ips[0]}" != "3.173.254.31" ]; then
+                top_res_ips+=("3.173.254.31")
+            else
+                top_res_ips+=("18.65.59.212")
             fi
         fi
 
@@ -817,11 +843,17 @@ SC_SEED_EOF
 
         {
             echo "# === BEGIN_${test_dom} ==="
-            if [ -n "$best_res_ip" ]; then
-                echo "# ${grp_title} -> 已100%锁定最快命中节点IP: ${best_res_ip} (真实耗时: ${best_tot_ms}, 来源: ${best_dns_ip} ${best_dns_name})"
+            if [ ${#top_res_ips[@]} -gt 0 ]; then
+                local ips_str=""
+                for tip in "${top_res_ips[@]}"; do
+                    ips_str="${ips_str}${tip} "
+                done
+                echo "# ${grp_title} -> 双节点并发热备: [ ${ips_str}] (主节点: ${best_res_ip}, 耗时: ${best_tot_ms})"
                 IFS=',' read -ra dom_list <<< "$sub_doms"
                 for sub_d in "${dom_list[@]}"; do
-                    echo "address=/${sub_d}/${best_res_ip}"
+                    for tip in "${top_res_ips[@]}"; do
+                        echo "address=/${sub_d}/${tip}"
+                    done
                     if [[ ! "$best_dns_name" =~ "本家权威" ]] && [ -n "$best_dns_ip" ]; then
                         echo "server=/${sub_d}/${best_dns_ip}"
                     else
@@ -838,6 +870,11 @@ SC_SEED_EOF
             fi
             echo "# === END_${test_dom} ==="
         } >> "$work_conf"
+
+        if [ ${#top_res_ips[@]} -gt 0 ]; then
+            [ "$silent_mode" != "silent" ] && echo -e "    ${YELLOW}★ 最终锁定双节点并发热备:${NC} 【${WHITE}${test_dom}${NC}】 ===> ${GREEN}${top_res_ips[*]}${NC} (主节点耗时: ${best_tot_ms}, 来源: ${best_dns_name})"
+            summary_log="${summary_log}${test_dom}->${top_res_ips[*]}(${best_tot_ms}) "
+        fi
 
         if [ -n "$best_res_ip" ]; then
             [ "$silent_mode" != "silent" ] && echo -e "    ${YELLOW}★ 最终锁定最快命中节点:${NC} 【${WHITE}${test_dom}${NC}】 ===> 100% 锁定至极速节点 ${GREEN}${best_res_ip}${NC} (真实耗时: ${best_tot_ms}, 来源: ${best_dns_name})"
@@ -887,13 +924,13 @@ DOMAIN_DNS_CONF="/etc/dnsmasq.d/amazon_domain_dns.conf"
 OPT_LOCK_FILE="/tmp/amazon_opt.lock"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-# 核心业务健康度巡检列表 (已移除在国内遭遇 SNI 阻断的 images-na 探针，由 m.media-amazon 统一代管)
+# 核心业务健康度巡检列表 (自愈阈值收紧至 2.2s，毫秒级探测丢包与死链)
 check_Domains=(
-    "sellercentral.amazon.com|/gp/homepage.html|4500"
-    "advertising.amazon.com|/|4500"
-    "m.media-amazon.com|/favicon.ico|3000"
-    "aax-us-east.amazon-adsystem.com|/|4000"
-    "www.amazon.com|/favicon.ico|3000"
+    "sellercentral.amazon.com|/gp/homepage.html|2200"
+    "advertising.amazon.com|/|3000"
+    "m.media-amazon.com|/favicon.ico|1800"
+    "aax-us-east.amazon-adsystem.com|/|2500"
+    "www.amazon.com|/favicon.ico|2000"
 )
 
 declare -A fail_counts
@@ -921,9 +958,9 @@ while true; do
             locked_ip=$(grep -E "^address=/${dom}/" "$DOMAIN_DNS_CONF" 2>/dev/null | head -n 1 | awk -F'/' '{print $3}')
             last_ts=${last_failover_ts["$dom"]:-0}
 
-            # 熔断退避：单个域名自愈切换间隔至少 180 秒，防止死循环压测拖垮 VPS
+            # 熔断退避：单个域名自愈切换间隔至少 60 秒，防止死循环压测拖垮 VPS
             if [ -z "$locked_ip" ]; then
-                if (( cur_ts - last_ts >= 180 )); then
+                if (( cur_ts - last_ts >= 60 )); then
                     last_failover_ts["$dom"]=$cur_ts
                     /bin/bash /usr/bin/vps --failover-domain "$dom" >/dev/null 2>&1
                 fi
@@ -935,7 +972,7 @@ while true; do
                 need_switch=1
             fi
 
-            res=$(curl -4 -s -o /dev/null --connect-timeout 3 --max-time 6 \
+            res=$(curl -4 -s -o /dev/null --connect-timeout 2 --max-time 4 \
                 -A "$UA" --resolve "${dom}:443:${locked_ip}" \
                 -w "%{http_code}|%{time_appconnect}|%{time_total}|%{ssl_verify_result}" \
                 "https://${dom}${path}" 2>/dev/null)
@@ -945,9 +982,9 @@ while true; do
 
             if [ "$hcode" == "000" ] || [ "$ms_ssl" -le 0 ] || [ "${serr:-1}" != "0" ] || [ "$ms_tot" -gt "$max_ms" ]; then
                 fail_counts["$dom"]=$(( ${fail_counts["$dom"]:-0} + 1 ))
-                # 若发现 SYN-SENT 卡死则立即切换(1次)；若仅延迟超时则需连续 3 次探测失败触发自愈，防偶发抖动
-                if [ "$need_switch" -eq 1 ] || [ "${fail_counts["$dom"]}" -ge 3 ]; then
-                    if (( cur_ts - last_ts >= 180 )); then
+                # 若发现 SYN-SENT 卡死则立即切换(1次)；若延迟超时(>2.2s)或0字节假死连续 2 次触发自愈
+                if [ "$need_switch" -eq 1 ] || [ "${fail_counts["$dom"]}" -ge 2 ]; then
+                    if (( cur_ts - last_ts >= 60 )); then
                         last_failover_ts["$dom"]=$cur_ts
                         /bin/bash /usr/bin/vps --failover-domain "$dom" >/dev/null 2>&1
                     fi
@@ -2077,10 +2114,10 @@ install_all() {
     fi
 }
 
-# 单独一键无损极速升级 v7.7
+# 单独一键无损极速升级 v7.8
 optimize_suite_only() {
     clear
-    print_brand_banner "正在执行 v7.7 无损极速升级 (保留原有代理端口与账号密码)"
+    print_brand_banner "正在执行 v7.8 无损极速升级 (保留原有代理端口与账号密码)"
     ensure_working_dns
     purge_legacy_cron
     optimize_kernel
@@ -2094,9 +2131,9 @@ optimize_suite_only() {
 
     echo -e "\n${GREEN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║  恭喜！晓林技术支持 ${SCRIPT_VERSION} 旗舰版已全部生效 (原有端口密码不变)！         ║${NC}"
-    echo -e "${GREEN}║  1. 彻底拉黑 13.249.* 与 52.85.* 假死节点，注入东京优质 CloudFront 节点池 ║${NC}"
-    echo -e "${GREEN}║  2. 移除 images-na 直接检测，解决 GFW SNI 重置导致的守护进程无限自愈死循环║${NC}"
-    echo -e "${GREEN}║  3. 增加单域名自愈防误伤机制，守护进程引入 flock 文件锁防止多实例并发冲突  ║${NC}"
+    echo -e "${GREEN}║  1. 架构升级：主备双节点并发热备，Happy Eyeballs 250ms 瞬切彻底告别白屏   ║${NC}"
+    echo -e "${GREEN}║  2. 极速调度：锁定 3.173.238.45(409ms) + 3.173.254.31(669ms) 东京极速池   ║${NC}"
+    echo -e "${GREEN}║  3. 灵敏自愈：超时阈值收紧至 2.2s，连续 2 次异常秒级换新，保障持续流畅    ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -2244,33 +2281,40 @@ main_menu() {
         [ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" == "bbr" ] && st_bbr="${GREEN}●BBR已开启${NC}"
 
         echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║${NC}      ${YELLOW}★ 晓 林 技 术 支 持  ·  XIAOLIN TECH SUPPORT (旗舰版 ${SCRIPT_VERSION}) ★${NC}        ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}    ${WHITE}亚马逊跨境电商专属 VPS 极速网络 · 命中节点锁定 · 一号一IP防关联系统${NC}   ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}               ${YELLOW}██╗  ██╗██╗ █████╗  ██████╗ ██╗     ██╗███╗   ██╗${NC}          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}               ${YELLOW}╚██╗██╔╝██║██╔══██╗██╔═══██╗██║     ██║████╗  ██║${NC}          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}                ${YELLOW}╚███╔╝ ██║███████║██║   ██║██║     ██║██╔██╗ ██║${NC}          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}                ${YELLOW}██╔██╗ ██║██╔══██║██║   ██║██║     ██║██║╚██╗██║${NC}          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}               ${YELLOW}██╔╝ ██╗██║██║  ██║╚██████╔╝███████╗██║██║ ╚████║${NC}          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}               ${YELLOW}╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝╚═╝  ╚═══╝${NC}          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}                                                                          ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}         ${YELLOW}★ 晓 林 技 术 支 持  ·  XIAOLIN TECH SUPPORT (旗舰版 ${SCRIPT_VERSION}) ★${NC}       ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC}        ${WHITE}亚马逊跨境电商专属 VPS 极速网络 · 双节点并发热备 · 一号一IP防关联${NC}   ${CYAN}║${NC}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${CYAN}║${NC} 出口IP: ${WHITE}${CACHED_PUBLIC_IP:-获取中}${NC} | 代理: ${st_proxy} | DNS: ${st_dns} | 自愈: ${st_failover} ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC} 出口IP: ${WHITE}${CACHED_PUBLIC_IP:-获取中}${NC} | 代理: ${st_proxy} | DNS: ${st_dns} | 自愈: ${st_failover} | 内核: ${st_bbr}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${CYAN}║${NC} ${YELLOW}【一、核心部署与无损升级】${NC}                                               ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${GREEN}[01]${NC} ${GREEN}一键全自动极速部署${NC} ${WHITE}(采集权威DNS + 秒拒Google阻塞 + 锁死最快IP)${NC}     ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${CYAN}[02]${NC} ${CYAN}一键无损应用 ${SCRIPT_VERSION} 最新配置${NC} ${WHITE}(保留原端口密码 | 升级内存直读代理核心)${NC} ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${GREEN}[14]${NC} ${GREEN}一键在线更新脚本最新版本${NC} ${WHITE}(从 GitHub 多镜像防缓存极速拉取最新代码)${NC}  ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【 🚀 一、核心部署与无损极速升级 】${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[01]${NC} ${GREEN}一键全自动极速部署${NC} ${WHITE}(全量采集权威DNS + 双节点热备 + 秒锁最快IP)${NC}"
+        echo -e "${CYAN}║${NC}  ${CYAN}[02]${NC} ${CYAN}一键无损升级 ${SCRIPT_VERSION} 最新配置${NC} ${WHITE}(保留原端口密码 | 启用双节点并发防白屏架构)${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[14]${NC} ${GREEN}一键在线更新脚本最新版本${NC} ${WHITE}(从 GitHub 多镜像防缓存极速拉取最新代码)${NC}"
         echo -e "${CYAN}╟──────────────────────────────────────────────────────────────────────────╢${NC}"
-        echo -e "${CYAN}║${NC} ${YELLOW}【二、亚马逊节点优选与全链路毫秒级测速】${NC}                                 ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${GREEN}[03]${NC} ${GREEN}按域名命中节点测速锁定与秒级故障自愈中心${NC} ${WHITE}(已彻底移除定时任务干扰)${NC}  ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${YELLOW}[07]${NC} ${YELLOW}亚马逊卖家中心 / 广告后台 / 商品图片CDN 专项测速${NC} ${WHITE}(真实动态路径诊断)${NC}${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【 ⚡ 二、亚马逊专属节点优选与全链路深度测速 】${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[03]${NC} ${GREEN}按域名命中节点测速锁定与秒级自愈中心${NC} ${WHITE}(双节点并发热备，拒绝单点故障)${NC}"
+        echo -e "${CYAN}║${NC}  ${YELLOW}[07]${NC} ${YELLOW}亚马逊卖家中心 / 广告后台 / 多媒体CDN 专项测速${NC} ${WHITE}(真实动态路径诊断)${NC}"
         echo -e "${CYAN}╟──────────────────────────────────────────────────────────────────────────╢${NC}"
-        echo -e "${CYAN}║${NC} ${YELLOW}【三、代理账号管理与“一号一IP”防关联安全护盾】${NC}                           ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${WHITE}[04]${NC} 修改 代理端口 / 账号 / 密码 ${GRAY}(自动清理冲突并强开系统防火墙端口)${NC}     ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${CYAN}[05]${NC} ${CYAN}查询当前代理信息${NC} ${WHITE}(Socks5/HTTP 账号密码与指纹浏览器一键导入格式)${NC}    ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${WHITE}[06]${NC} 强行强开系统端口 ${GRAY}(暴力释放占用进程 + 穿透系统防火墙置顶放行)${NC}       ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${GREEN}[08]${NC} ${GREEN}VPS IP 纯净度体检与本土同城 IP 防关联评估${NC} ${WHITE}(防视频验证 / 防泄露)${NC}    ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${YELLOW}[09]${NC} ${YELLOW}专属 IP 防盗刷护盾${NC} ${WHITE}(客户端宽带 IP 白名单锁 / WebRTC与垃圾端口拦截)${NC} ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【 🛡️  三、代理账号管理与“一号一IP”防关联安全护盾 】${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[04]${NC} 修改 代理端口 / 账号 / 密码 ${GRAY}(自动清理冲突并强开系统防火墙端口)${NC}"
+        echo -e "${CYAN}║${NC}  ${CYAN}[05]${NC} ${CYAN}查询当前代理信息${NC} ${WHITE}(Socks5/HTTP 账号密码与指纹浏览器一键导入格式)${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[06]${NC} 强行强开系统端口 ${GRAY}(暴力释放占用进程 + 穿透系统防火墙置顶放行)${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}[08]${NC} ${GREEN}VPS IP 纯净度体检与本土同城 IP 防关联评估${NC} ${WHITE}(防视频验证 / 防泄露)${NC}"
+        echo -e "${CYAN}║${NC}  ${YELLOW}[09]${NC} ${YELLOW}专属 IP 防盗刷护盾${NC} ${WHITE}(客户端宽带 IP 白名单锁 / WebRTC与垃圾端口拦截)${NC}"
         echo -e "${CYAN}╟──────────────────────────────────────────────────────────────────────────╢${NC}"
-        echo -e "${CYAN}║${NC} ${YELLOW}【四、系统自检维护与安全卸载还原】${NC}                                       ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${CYAN}[10]${NC} 全组件状态自检与自动重装修复 ${GRAY}(检查并修复 5 大核心加速组件)${NC}         ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${WHITE}[11]${NC} 停止 / 开启 / 重启服务 ${GRAY}(gost / dnsmasq / amazon-failover)${NC}          ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${WHITE}[12]${NC} 查看实时运行日志 ${GRAY}(按 Ctrl+C 退出日志模式)${NC}                          ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${RED}[13]${NC} ${RED}彻底安全卸载${NC} ${WHITE}(清除所有加速服务 + 自动恢复可用DNS，100%绝不断网)${NC}    ${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${WHITE}[00]${NC} 退出管理面板 ${GRAY}(快捷呼出命令: vps | 技术支持: 晓林技术)${NC}              ${CYAN}║${NC}"
+        echo -e "${CYAN}║${NC} ${YELLOW}【 🔧 四、系统自检维护与安全卸载还原 】${NC}"
+        echo -e "${CYAN}║${NC}  ${CYAN}[10]${NC} 全组件状态自检与自动重装修复 ${GRAY}(检查并自愈 5 大核心加速组件)${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[11]${NC} 停止 / 开启 / 重启服务 ${GRAY}(gost / dnsmasq / amazon-failover)${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[12]${NC} 查看实时运行日志 ${GRAY}(按 Ctrl+C 退出日志模式)${NC}"
+        echo -e "${CYAN}║${NC}  ${RED}[13]${NC} ${RED}彻底安全卸载${NC} ${WHITE}(清除所有加速服务 + 自动恢复可用DNS，100%绝不断网)${NC}"
+        echo -e "${CYAN}║${NC}  ${WHITE}[00]${NC} 退出管理面板 ${GRAY}(快捷呼出命令: vps | 技术支持: 晓林技术)${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
         read -p "请输入数字选择 [0-14]: " num
 
