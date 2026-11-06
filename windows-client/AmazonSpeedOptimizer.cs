@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
@@ -17,11 +18,12 @@ namespace AmazonSpeedOptimizer
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm());
+            bool startMinimized = (args != null && args.Length > 0 && args[0] == "--minimized");
+            Application.Run(new MainForm(startMinimized));
         }
     }
 
@@ -30,7 +32,6 @@ namespace AmazonSpeedOptimizer
         [DllImport("dnsapi.dll", EntryPoint = "DnsFlushResolverCache")]
         private static extern int DnsFlushResolverCache();
 
-        // 核心候选极速节点列表 (CloudFront 东京、亚太骨干与官方优质池)
         private static readonly string[] CandidateNodes = new string[]
         {
             "3.173.238.45",   // 东京极速核心 A
@@ -41,177 +42,509 @@ namespace AmazonSpeedOptimizer
             "99.84.104.121"   // 官方广告与全局 CDN F
         };
 
+        // UI 控件
+        private TabControl tabControl;
+        private TabPage tabSpeed;
+        private TabPage tabSettings;
+
+        // 头部
+        private Panel pnlHeader;
+        private Label lblTitle;
+        private Label lblSubtitle;
+
+        // 加速卡片控件
+        private Panel pnlCard;
         private Label lblStatus;
         private Label lblLineInfo;
         private Label lblLatency;
         private Label lblVpnInfo;
+
+        // 操作按钮
         private Button btnToggle;
         private Button btnTest;
         private Button btnCopyScript;
         private TextBox txtLog;
+        private Label lblLogTitle;
+        private Label lblFooter;
+
+        // 设置控件
+        private GroupBox grpTheme;
+        private RadioButton rdoDark;
+        private RadioButton rdoLight;
+        private GroupBox grpClose;
+        private RadioButton rdoCloseTray;
+        private RadioButton rdoCloseExit;
+        private GroupBox grpStartup;
+        private CheckBox chkAutoStart;
+        private Label lblSettingsTip;
+
+        // 系统托盘
+        private NotifyIcon notifyIcon;
+        private ContextMenuStrip trayMenu;
+        private bool isExiting = false;
+
+        // 配置项
+        private string currentTheme = "Dark";
+        private bool closeToTray = true;
+        private bool autoStart = false;
         private bool isAccelerated = false;
 
-        public MainForm()
+        public MainForm(bool startMinimized)
         {
+            LoadSettings();
             InitializeComponent();
+            ApplyTheme(currentTheme);
             CheckCurrentStatus();
+
+            if (startMinimized)
+            {
+                this.WindowState = FormWindowState.Minimized;
+                this.ShowInTaskbar = false;
+            }
+
             ThreadPool.QueueUserWorkItem(delegate { AutoDetectLineAndSpeed(); });
+        }
+
+        private string GetConfigFilePath()
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.ini");
+        }
+
+        private void LoadSettings()
+        {
+            string cfgFile = GetConfigFilePath();
+            try
+            {
+                if (File.Exists(cfgFile))
+                {
+                    string[] lines = File.ReadAllLines(cfgFile, Encoding.UTF8);
+                    foreach (string line in lines)
+                    {
+                        string trimmed = line.Trim();
+                        if (trimmed.StartsWith("Theme="))
+                        {
+                            currentTheme = trimmed.Substring(6).Trim();
+                        }
+                        else if (trimmed.StartsWith("CloseToTray="))
+                        {
+                            bool.TryParse(trimmed.Substring(12).Trim(), out closeToTray);
+                        }
+                        else if (trimmed.StartsWith("AutoStart="))
+                        {
+                            bool.TryParse(trimmed.Substring(10).Trim(), out autoStart);
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void SaveSettings()
+        {
+            string cfgFile = GetConfigFilePath();
+            try
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("[Settings]");
+                sb.AppendLine("Theme=" + currentTheme);
+                sb.AppendLine("CloseToTray=" + closeToTray.ToString());
+                sb.AppendLine("AutoStart=" + autoStart.ToString());
+                File.WriteAllText(cfgFile, sb.ToString(), Encoding.UTF8);
+            }
+            catch { }
         }
 
         private void InitializeComponent()
         {
-            this.Text = "★ 晓林技术支持 ★ 亚马逊跨境电商专属极速网络优化大师 (Windows版)";
-            this.Size = new Size(760, 640);
+            this.Text = "★ 晓林技术支持 ★ 亚马逊跨境电商专属极速网络优化大师";
+            this.Size = new Size(780, 680);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.BackColor = Color.FromArgb(24, 24, 36);
-            this.ForeColor = Color.White;
             this.Font = new Font("Microsoft YaHei", 9.5f, FontStyle.Regular);
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
 
-            // 头部 Header Panel
-            Panel pnlHeader = new Panel();
-            pnlHeader.Dock = DockStyle.Top;
-            pnlHeader.Height = 85;
-            pnlHeader.BackColor = Color.FromArgb(16, 16, 26);
-            pnlHeader.Paint += delegate(object s, PaintEventArgs e)
+            // 加载图标
+            try
             {
-                using (Pen p = new Pen(Color.FromArgb(255, 153, 0), 2))
+                string localIco = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+                if (File.Exists(localIco))
                 {
-                    e.Graphics.DrawLine(p, 0, pnlHeader.Height - 1, pnlHeader.Width, pnlHeader.Height - 1);
+                    this.Icon = new Icon(localIco);
                 }
-            };
+                else
+                {
+                    using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico"))
+                    {
+                        if (s != null) this.Icon = new Icon(s);
+                    }
+                }
+            }
+            catch { }
 
-            Label lblTitle = new Label();
+            // 系统托盘 NotifyIcon
+            trayMenu = new ContextMenuStrip();
+            ToolStripMenuItem menuOpen = new ToolStripMenuItem("🚀 打开主界面", null, delegate { RestoreWindow(); });
+            ToolStripMenuItem menuToggle = new ToolStripMenuItem("⚡ 切换加速状态", null, delegate { btnToggle_Click(this, EventArgs.Empty); });
+            ToolStripMenuItem menuSettings = new ToolStripMenuItem("⚙️ 软件设置", null, delegate { RestoreWindow(); tabControl.SelectedTab = tabSettings; });
+            ToolStripSeparator menuSep = new ToolStripSeparator();
+            ToolStripMenuItem menuExit = new ToolStripMenuItem("❌ 彻底退出", null, delegate { isExiting = true; Application.Exit(); });
+
+            trayMenu.Items.AddRange(new ToolStripItem[] { menuOpen, menuToggle, menuSettings, menuSep, menuExit });
+
+            notifyIcon = new NotifyIcon();
+            notifyIcon.Text = "亚马逊极速优化大师 (后台运行中)";
+            notifyIcon.Icon = this.Icon;
+            notifyIcon.ContextMenuStrip = trayMenu;
+            notifyIcon.Visible = true;
+            notifyIcon.DoubleClick += delegate { RestoreWindow(); };
+
+            // 头部 Header
+            pnlHeader = new Panel();
+            pnlHeader.Dock = DockStyle.Top;
+            pnlHeader.Height = 82;
+
+            lblTitle = new Label();
             lblTitle.Text = "⚡ 亚马逊跨境卖家专属网络极速直通 · 桌面优化大师";
             lblTitle.Font = new Font("Microsoft YaHei", 13f, FontStyle.Bold);
-            lblTitle.ForeColor = Color.FromArgb(255, 180, 0);
             lblTitle.Location = new Point(20, 16);
             lblTitle.AutoSize = true;
             pnlHeader.Controls.Add(lblTitle);
 
-            Label lblSubtitle = new Label();
+            lblSubtitle = new Label();
             lblSubtitle.Text = "原生毫秒级东京节点直连 · 智能识别访问线路 · 100%兼容科学上网分流 (不影响Facebook/Google等海外网站)";
             lblSubtitle.Font = new Font("Microsoft YaHei", 9f, FontStyle.Regular);
-            lblSubtitle.ForeColor = Color.FromArgb(180, 180, 200);
             lblSubtitle.Location = new Point(22, 48);
             lblSubtitle.AutoSize = true;
             pnlHeader.Controls.Add(lblSubtitle);
 
             this.Controls.Add(pnlHeader);
 
-            // 核心状态卡片 Panel
-            Panel pnlCard = new Panel();
-            pnlCard.Location = new Point(20, 105);
-            pnlCard.Size = new Size(705, 150);
-            pnlCard.BackColor = Color.FromArgb(32, 33, 50);
-            pnlCard.Paint += delegate(object s, PaintEventArgs e)
-            {
-                using (Pen p = new Pen(Color.FromArgb(50, 52, 78), 1))
-                {
-                    e.Graphics.DrawRectangle(p, 0, 0, pnlCard.Width - 1, pnlCard.Height - 1);
-                }
-            };
+            // 主选项卡 TabControl
+            tabControl = new TabControl();
+            tabControl.Dock = DockStyle.Fill;
+            tabControl.Font = new Font("Microsoft YaHei", 10f, FontStyle.Bold);
+
+            tabSpeed = new TabPage("⚡ 极速直通加速");
+            tabSettings = new TabPage("⚙️ 软件个性化设置");
+
+            tabControl.TabPages.Add(tabSpeed);
+            tabControl.TabPages.Add(tabSettings);
+            this.Controls.Add(tabControl);
+
+            // ================== [Tab 1: 极速加速界面] ==================
+            tabSpeed.Padding = new Padding(12);
+
+            pnlCard = new Panel();
+            pnlCard.Location = new Point(16, 16);
+            pnlCard.Size = new Size(725, 145);
 
             lblStatus = new Label();
             lblStatus.Text = "加速状态: 正在检测系统 hosts 配置...";
             lblStatus.Font = new Font("Microsoft YaHei", 10.5f, FontStyle.Bold);
-            lblStatus.ForeColor = Color.FromArgb(255, 200, 0);
-            lblStatus.Location = new Point(18, 16);
+            lblStatus.Location = new Point(18, 15);
             lblStatus.AutoSize = true;
             pnlCard.Controls.Add(lblStatus);
 
             lblLineInfo = new Label();
             lblLineInfo.Text = "🌐 亚马逊访问线路: 正在探测当前网络出海出口 (宽带直连 vs 翻墙分流)...";
-            lblLineInfo.ForeColor = Color.FromArgb(220, 220, 240);
-            lblLineInfo.Location = new Point(18, 48);
+            lblLineInfo.Location = new Point(18, 46);
             lblLineInfo.AutoSize = true;
             pnlCard.Controls.Add(lblLineInfo);
 
             lblLatency = new Label();
             lblLatency.Text = "⚡ 亚马逊后台延迟: 测速就绪中...";
-            lblLatency.ForeColor = Color.FromArgb(0, 230, 150);
-            lblLatency.Location = new Point(18, 80);
+            lblLatency.Location = new Point(18, 77);
             lblLatency.AutoSize = true;
             pnlCard.Controls.Add(lblLatency);
 
             lblVpnInfo = new Label();
             lblVpnInfo.Text = "🛡️ 翻墙软件兼容性: ● 规则分流已就绪 (仅优化亚马逊，海外受限网站走原翻墙节点)";
-            lblVpnInfo.ForeColor = Color.FromArgb(0, 200, 255);
-            lblVpnInfo.Location = new Point(18, 112);
+            lblVpnInfo.Location = new Point(18, 108);
             lblVpnInfo.AutoSize = true;
             pnlCard.Controls.Add(lblVpnInfo);
 
-            this.Controls.Add(pnlCard);
+            tabSpeed.Controls.Add(pnlCard);
 
-            // 操作按钮区
-            int btnY = 270;
+            // 操作按钮
+            int btnY = 175;
             btnToggle = new Button();
             btnToggle.Text = "⚡ 一键开启亚马逊极速直通";
-            btnToggle.Location = new Point(20, btnY);
-            btnToggle.Size = new Size(230, 46);
+            btnToggle.Location = new Point(16, btnY);
+            btnToggle.Size = new Size(230, 45);
             btnToggle.Font = new Font("Microsoft YaHei", 10.5f, FontStyle.Bold);
-            btnToggle.BackColor = Color.FromArgb(255, 140, 0);
-            btnToggle.ForeColor = Color.White;
             btnToggle.FlatStyle = FlatStyle.Flat;
             btnToggle.FlatAppearance.BorderSize = 0;
             btnToggle.Cursor = Cursors.Hand;
             btnToggle.Click += new EventHandler(btnToggle_Click);
-            this.Controls.Add(btnToggle);
+            tabSpeed.Controls.Add(btnToggle);
 
             btnTest = new Button();
             btnTest.Text = "🔍 重新全链路测速诊断";
-            btnTest.Location = new Point(265, btnY);
-            btnTest.Size = new Size(210, 46);
+            btnTest.Location = new Point(260, btnY);
+            btnTest.Size = new Size(215, 45);
             btnTest.Font = new Font("Microsoft YaHei", 10f, FontStyle.Bold);
-            btnTest.BackColor = Color.FromArgb(45, 48, 72);
-            btnTest.ForeColor = Color.FromArgb(220, 220, 255);
             btnTest.FlatStyle = FlatStyle.Flat;
             btnTest.FlatAppearance.BorderSize = 0;
             btnTest.Cursor = Cursors.Hand;
             btnTest.Click += delegate { ThreadPool.QueueUserWorkItem(delegate { AutoDetectLineAndSpeed(); }); };
-            this.Controls.Add(btnTest);
+            tabSpeed.Controls.Add(btnTest);
 
             btnCopyScript = new Button();
             btnCopyScript.Text = "📋 复制图片秒开油猴脚本";
             btnCopyScript.Location = new Point(490, btnY);
-            btnCopyScript.Size = new Size(235, 46);
+            btnCopyScript.Size = new Size(250, 45);
             btnCopyScript.Font = new Font("Microsoft YaHei", 10f, FontStyle.Bold);
-            btnCopyScript.BackColor = Color.FromArgb(30, 70, 110);
-            btnCopyScript.ForeColor = Color.FromArgb(100, 210, 255);
             btnCopyScript.FlatStyle = FlatStyle.Flat;
             btnCopyScript.FlatAppearance.BorderSize = 0;
             btnCopyScript.Cursor = Cursors.Hand;
             btnCopyScript.Click += new EventHandler(btnCopyScript_Click);
-            this.Controls.Add(btnCopyScript);
+            tabSpeed.Controls.Add(btnCopyScript);
 
-            // 日志展示区
-            Label lblLogTitle = new Label();
+            // 日志
+            lblLogTitle = new Label();
             lblLogTitle.Text = "运行日志与实时诊断信息:";
-            lblLogTitle.Location = new Point(20, 332);
+            lblLogTitle.Location = new Point(16, 230);
             lblLogTitle.AutoSize = true;
-            lblLogTitle.ForeColor = Color.FromArgb(160, 160, 180);
-            this.Controls.Add(lblLogTitle);
+            tabSpeed.Controls.Add(lblLogTitle);
 
             txtLog = new TextBox();
-            txtLog.Location = new Point(20, 355);
-            txtLog.Size = new Size(705, 205);
+            txtLog.Location = new Point(16, 252);
+            txtLog.Size = new Size(725, 235);
             txtLog.Multiline = true;
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.BackColor = Color.FromArgb(14, 14, 22);
-            txtLog.ForeColor = Color.FromArgb(0, 255, 180);
             txtLog.Font = new Font("Consolas", 9f);
-            this.Controls.Add(txtLog);
+            tabSpeed.Controls.Add(txtLog);
 
-            // 底部版权与安全保障
-            Label lblFooter = new Label();
+            lblFooter = new Label();
             lblFooter.Text = "技术支持: 晓林技术 | 安全提示: 软件仅精准优化亚马逊卖家后台与图片CDN，绝不影响翻墙分流与其它海外网站！";
             lblFooter.Font = new Font("Microsoft YaHei", 8.5f);
-            lblFooter.ForeColor = Color.FromArgb(110, 115, 140);
-            lblFooter.Location = new Point(20, 570);
+            lblFooter.Location = new Point(16, 498);
             lblFooter.AutoSize = true;
-            this.Controls.Add(lblFooter);
+            tabSpeed.Controls.Add(lblFooter);
+
+            // ================== [Tab 2: 软件设置界面] ==================
+            tabSettings.Padding = new Padding(20);
+
+            // 主题设置 GroupBox
+            grpTheme = new GroupBox();
+            grpTheme.Text = " 🎨 界面视觉主题模式 ";
+            grpTheme.Location = new Point(20, 20);
+            grpTheme.Size = new Size(715, 90);
+
+            rdoDark = new RadioButton();
+            rdoDark.Text = "🌙 暗黑极客科技模式 (默认)";
+            rdoDark.Location = new Point(30, 36);
+            rdoDark.AutoSize = true;
+            rdoDark.Checked = (currentTheme == "Dark");
+            rdoDark.CheckedChanged += delegate { if (rdoDark.Checked) SetTheme("Dark"); };
+
+            rdoLight = new RadioButton();
+            rdoLight.Text = "☀️ 极简纯净明亮模式";
+            rdoLight.Location = new Point(300, 36);
+            rdoLight.AutoSize = true;
+            rdoLight.Checked = (currentTheme == "Light");
+            rdoLight.CheckedChanged += delegate { if (rdoLight.Checked) SetTheme("Light"); };
+
+            grpTheme.Controls.Add(rdoDark);
+            grpTheme.Controls.Add(rdoLight);
+            tabSettings.Controls.Add(grpTheme);
+
+            // 关闭行为设置 GroupBox
+            grpClose = new GroupBox();
+            grpClose.Text = " 🛑 窗口关闭行为 ";
+            grpClose.Location = new Point(20, 125);
+            grpClose.Size = new Size(715, 90);
+
+            rdoCloseTray = new RadioButton();
+            rdoCloseTray.Text = "📌 最小化到系统右下角托盘 (隐藏任务栏，保持后台极速直连)";
+            rdoCloseTray.Location = new Point(30, 36);
+            rdoCloseTray.AutoSize = true;
+            rdoCloseTray.Checked = closeToTray;
+            rdoCloseTray.CheckedChanged += delegate { closeToTray = rdoCloseTray.Checked; SaveSettings(); };
+
+            rdoCloseExit = new RadioButton();
+            rdoCloseExit.Text = "❌ 直接彻底退出程序";
+            rdoCloseExit.Location = new Point(460, 36);
+            rdoCloseExit.AutoSize = true;
+            rdoCloseExit.Checked = !closeToTray;
+            rdoCloseExit.CheckedChanged += delegate { closeToTray = !rdoCloseExit.Checked; SaveSettings(); };
+
+            grpClose.Controls.Add(rdoCloseTray);
+            grpClose.Controls.Add(rdoCloseExit);
+            tabSettings.Controls.Add(grpClose);
+
+            // 开机启动 GroupBox
+            grpStartup = new GroupBox();
+            grpStartup.Text = " 🚀 系统启动与自动化 ";
+            grpStartup.Location = new Point(20, 230);
+            grpStartup.Size = new Size(715, 90);
+
+            chkAutoStart = new CheckBox();
+            chkAutoStart.Text = "开机自动启动本软件 (开机自动静默后台运行，随时享受极速亚马逊网络)";
+            chkAutoStart.Location = new Point(30, 36);
+            chkAutoStart.AutoSize = true;
+            chkAutoStart.Checked = autoStart;
+            chkAutoStart.CheckedChanged += delegate
+            {
+                autoStart = chkAutoStart.Checked;
+                SetAutoStart(autoStart);
+                SaveSettings();
+            };
+
+            grpStartup.Controls.Add(chkAutoStart);
+            tabSettings.Controls.Add(grpStartup);
+
+            // 软件说明
+            lblSettingsTip = new Label();
+            lblSettingsTip.Text = "💡 安全与使用说明：\n" +
+                "1. 本软件专为亚马逊跨境卖家打造，采用底层直连映射技术，0 延迟、0 丢包。\n" +
+                "2. 软件运行与加速期间，绝不触碰任何外网域名（Facebook、YouTube、Google 等海外站点 100% 照常走您的翻墙分流线路）。\n" +
+                "3. 设置项会自动实时保存至当前目录下的 settings.ini 配置文件。";
+            lblSettingsTip.Location = new Point(20, 340);
+            lblSettingsTip.Size = new Size(715, 120);
+            lblSettingsTip.Font = new Font("Microsoft YaHei", 9f);
+            tabSettings.Controls.Add(lblSettingsTip);
+        }
+
+        private void RestoreWindow()
+        {
+            this.Show();
+            this.WindowState = FormWindowState.Normal;
+            this.ShowInTaskbar = true;
+            this.Activate();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (!isExiting && closeToTray)
+            {
+                e.Cancel = true;
+                this.Hide();
+                this.ShowInTaskbar = false;
+                if (notifyIcon != null)
+                {
+                    notifyIcon.ShowBalloonTip(2000, "亚马逊极速优化大师", "软件已最小化隐藏至系统右下角托盘，后台极速加速持续运行中！", ToolTipIcon.Info);
+                }
+            }
+            else
+            {
+                if (notifyIcon != null)
+                {
+                    notifyIcon.Visible = false;
+                    notifyIcon.Dispose();
+                }
+                base.OnFormClosing(e);
+            }
+        }
+
+        private void SetTheme(string theme)
+        {
+            currentTheme = theme;
+            ApplyTheme(theme);
+            SaveSettings();
+        }
+
+        private void ApplyTheme(string theme)
+        {
+            if (theme == "Light")
+            {
+                // 明亮模式
+                this.BackColor = Color.FromArgb(244, 246, 249);
+                this.ForeColor = Color.FromArgb(30, 35, 45);
+
+                pnlHeader.BackColor = Color.White;
+                lblTitle.ForeColor = Color.FromArgb(230, 110, 0);
+                lblSubtitle.ForeColor = Color.FromArgb(100, 110, 125);
+
+                tabSpeed.BackColor = Color.FromArgb(244, 246, 249);
+                tabSettings.BackColor = Color.FromArgb(244, 246, 249);
+
+                pnlCard.BackColor = Color.White;
+                lblStatus.ForeColor = isAccelerated ? Color.FromArgb(0, 160, 80) : Color.FromArgb(210, 110, 0);
+                lblLineInfo.ForeColor = Color.FromArgb(50, 60, 75);
+                lblLatency.ForeColor = Color.FromArgb(0, 150, 90);
+                lblVpnInfo.ForeColor = Color.FromArgb(0, 120, 200);
+
+                btnTest.BackColor = Color.FromArgb(225, 230, 240);
+                btnTest.ForeColor = Color.FromArgb(40, 50, 70);
+
+                btnCopyScript.BackColor = Color.FromArgb(215, 235, 255);
+                btnCopyScript.ForeColor = Color.FromArgb(0, 100, 200);
+
+                txtLog.BackColor = Color.White;
+                txtLog.ForeColor = Color.FromArgb(20, 120, 60);
+
+                grpTheme.ForeColor = Color.FromArgb(30, 35, 45);
+                grpClose.ForeColor = Color.FromArgb(30, 35, 45);
+                grpStartup.ForeColor = Color.FromArgb(30, 35, 45);
+                lblSettingsTip.ForeColor = Color.FromArgb(90, 100, 115);
+                lblLogTitle.ForeColor = Color.FromArgb(90, 100, 115);
+                lblFooter.ForeColor = Color.FromArgb(120, 130, 145);
+            }
+            else
+            {
+                // 暗黑模式 (默认)
+                this.BackColor = Color.FromArgb(24, 24, 36);
+                this.ForeColor = Color.White;
+
+                pnlHeader.BackColor = Color.FromArgb(16, 16, 26);
+                lblTitle.ForeColor = Color.FromArgb(255, 180, 0);
+                lblSubtitle.ForeColor = Color.FromArgb(180, 180, 200);
+
+                tabSpeed.BackColor = Color.FromArgb(24, 24, 36);
+                tabSettings.BackColor = Color.FromArgb(24, 24, 36);
+
+                pnlCard.BackColor = Color.FromArgb(32, 33, 50);
+                lblStatus.ForeColor = isAccelerated ? Color.FromArgb(0, 255, 150) : Color.FromArgb(255, 180, 0);
+                lblLineInfo.ForeColor = Color.FromArgb(220, 220, 240);
+                lblLatency.ForeColor = Color.FromArgb(0, 230, 150);
+                lblVpnInfo.ForeColor = Color.FromArgb(0, 200, 255);
+
+                btnTest.BackColor = Color.FromArgb(45, 48, 72);
+                btnTest.ForeColor = Color.FromArgb(220, 220, 255);
+
+                btnCopyScript.BackColor = Color.FromArgb(30, 70, 110);
+                btnCopyScript.ForeColor = Color.FromArgb(100, 210, 255);
+
+                txtLog.BackColor = Color.FromArgb(14, 14, 22);
+                txtLog.ForeColor = Color.FromArgb(0, 255, 180);
+
+                grpTheme.ForeColor = Color.White;
+                grpClose.ForeColor = Color.White;
+                grpStartup.ForeColor = Color.White;
+                lblSettingsTip.ForeColor = Color.FromArgb(180, 180, 200);
+                lblLogTitle.ForeColor = Color.FromArgb(160, 160, 180);
+                lblFooter.ForeColor = Color.FromArgb(110, 115, 140);
+            }
+        }
+
+        private void SetAutoStart(bool enable)
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+                {
+                    if (key != null)
+                    {
+                        string appPath = Application.ExecutablePath;
+                        if (enable)
+                        {
+                            key.SetValue("AmazonSpeedOptimizer", "\"" + appPath + "\" --minimized");
+                            AppendLog("✓ 已成功开启【开机自动启动】！");
+                        }
+                        else
+                        {
+                            key.DeleteValue("AmazonSpeedOptimizer", false);
+                            AppendLog("✓ 已成功关闭【开机自动启动】！");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("设置开机启动失败: " + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         private void AppendLog(string msg)
@@ -267,7 +600,7 @@ namespace AmazonSpeedOptimizer
                     {
                         isAccelerated = true;
                         lblStatus.Text = "加速状态: ● 极速直通已生效 (已锁定东京极速双节点并发热备)";
-                        lblStatus.ForeColor = Color.FromArgb(0, 255, 150);
+                        lblStatus.ForeColor = (currentTheme == "Light") ? Color.FromArgb(0, 160, 80) : Color.FromArgb(0, 255, 150);
                         btnToggle.Text = "🛑 还原系统默认网络 (取消加速)";
                         btnToggle.BackColor = Color.FromArgb(180, 40, 50);
                         return;
@@ -278,7 +611,7 @@ namespace AmazonSpeedOptimizer
 
             isAccelerated = false;
             lblStatus.Text = "加速状态: ○ 加速未开启 (当前为系统默认 DNS，容易出现卡顿与白屏)";
-            lblStatus.ForeColor = Color.FromArgb(255, 180, 0);
+            lblStatus.ForeColor = (currentTheme == "Light") ? Color.FromArgb(210, 110, 0) : Color.FromArgb(255, 180, 0);
             btnToggle.Text = "⚡ 一键开启亚马逊极速直通";
             btnToggle.BackColor = Color.FromArgb(255, 140, 0);
         }
@@ -293,12 +626,10 @@ namespace AmazonSpeedOptimizer
 
             if (isAccelerated)
             {
-                // 还原默认
                 DisableAcceleration();
             }
             else
             {
-                // 开启加速
                 EnableAcceleration();
             }
             CheckCurrentStatus();
@@ -310,7 +641,6 @@ namespace AmazonSpeedOptimizer
             string bestNode1 = "3.173.238.45";
             string bestNode2 = "3.173.254.31";
 
-            // 实时探测筛选
             List<KeyValuePair<string, long>> ranked = new List<KeyValuePair<string, long>>();
             foreach (string ip in CandidateNodes)
             {
@@ -337,7 +667,6 @@ namespace AmazonSpeedOptimizer
                     original = File.ReadAllText(hostsPath, Encoding.Default);
                 }
 
-                // 清理旧规则
                 string cleaned = CleanHostsContent(original);
 
                 StringBuilder sb = new StringBuilder();
@@ -360,7 +689,6 @@ namespace AmazonSpeedOptimizer
                 File.WriteAllText(hostsPath, sb.ToString(), Encoding.Default);
                 AppendLog("✓ 已成功将极速节点写入系统 hosts 规则！");
 
-                // 刷新系统 DNS 缓存
                 DnsFlushResolverCache();
                 try
                 {
@@ -371,7 +699,6 @@ namespace AmazonSpeedOptimizer
                 }
                 catch { }
 
-                // 调优 Windows TCP 拥塞控制与窗口缩放
                 try
                 {
                     ProcessStartInfo psiTcp = new ProcessStartInfo("netsh", "int tcp set global autotuninglevel=normal");
@@ -423,7 +750,6 @@ namespace AmazonSpeedOptimizer
             {
                 return original.Substring(0, sIdx) + original.Substring(eIdx + endTag.Length);
             }
-            // 兼容老版本标签
             startTag = "# === AMZ_LOCAL_FAST_START ===";
             endTag = "# === AMZ_LOCAL_FAST_END ===";
             sIdx = original.IndexOf(startTag);
@@ -460,7 +786,6 @@ namespace AmazonSpeedOptimizer
         {
             AppendLog("正在智能分析当前电脑的本地宽带与翻墙分流线路...");
 
-            // 1. 检查翻墙软件系统代理分流状态
             bool proxyEnabled = false;
             string proxyServer = "";
             try
@@ -484,7 +809,7 @@ namespace AmazonSpeedOptimizer
             string vpnText = "🛡️ 翻墙软件兼容性: ● 未开启系统代理 (直连模式，Facebook等未开启代理)";
             if (proxyEnabled)
             {
-                vpnText = string.Format("🛡️ 翻墙软件兼容性: ● 规则分流中 (系统代理端口: {0} | 境外网站走代理，亚马逊直连加速)", proxyServer);
+                vpnText = string.Format("🛡️ 翻墙软件兼容性: ● 规则分流中 (代理端口: {0} | 境外网站走代理，亚马逊直连加速)", proxyServer);
                 AppendLog("检测到本地已开启翻墙客户端系统代理: " + proxyServer);
             }
             else
@@ -492,7 +817,6 @@ namespace AmazonSpeedOptimizer
                 AppendLog("检测到本地未开启全局系统代理，使用本地网络适配器直通。");
             }
 
-            // 2. 探测访问亚马逊实际出海线路
             string lineDesc = "正在识别出口运营商...";
             long latencyToAmz = -1;
             try
@@ -526,11 +850,9 @@ namespace AmazonSpeedOptimizer
                 lineDesc = "直连波动 (建议点击下方开启极速直通)";
             }
 
-            // 3. 测速核心极速节点
             long tokyoLatency = TestTcpLatency("3.173.238.45", 443);
             if (tokyoLatency < 0) tokyoLatency = TestTcpLatency("3.173.254.31", 443);
 
-            // 更新 UI
             this.Invoke(new Action(delegate
             {
                 lblVpnInfo.Text = vpnText;
@@ -556,7 +878,7 @@ namespace AmazonSpeedOptimizer
             try
             {
                 string scriptCode = "";
-                using (Stream stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("AmazonSpeedRocket.user.js"))
+                using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("AmazonSpeedRocket.user.js"))
                 {
                     if (stream != null)
                     {
