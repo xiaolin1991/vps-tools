@@ -300,7 +300,7 @@ red "生成bing自签证书失败" && exit
 fi
 echo
 if [[ -f /root/ygkkkca/cert.crt && -f /root/ygkkkca/private.key && -s /root/ygkkkca/cert.crt && -s /root/ygkkkca/private.key ]]; then
-yellow "经检测，之前已使用Acme-yg脚本申请过Acme域名IP证书：$(cat /root/ygkkkca/ca.log) "
+yellow "经检测，之前已使用Acme脚本申请过Acme域名IP证书：$(cat /root/ygkkkca/ca.log) "
 green "是否使用 $(cat /root/ygkkkca/ca.log) 域名IP证书？"
 yellow "1：否！使用自签的证书 (回车默认)"
 yellow "2：是！使用 $(cat /root/ygkkkca/ca.log) 域名IP证书"
@@ -313,12 +313,12 @@ fi
 else
 green "是否申请一个Acme域名IP证书？"
 yellow "1：否！继续使用自签的证书 (回车默认)"
-yellow "2：是！使用Acme-yg脚本申请Acme证书 (支持80端口域名IP证书模式与Dns API域名模式)"
+yellow "2：是！使用Acme脚本申请Acme证书 (支持80端口域名IP证书模式与Dns API域名模式)"
 readp "请选择【1-2】：" menu
 if [ -z "$menu" ] || [ "$menu" = "1" ] ; then
 zqzs
 else
-bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/acme-yg/main/acme.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/acme.sh 2>/dev/null || curl -Ls https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/acme.sh)
 if [[ ! -f /root/ygkkkca/cert.crt && ! -f /root/ygkkkca/private.key && ! -s /root/ygkkkca/cert.crt && ! -s /root/ygkkkca/private.key ]]; then
 red "Acme证书申请失败，继续使用自签证书" 
 zqzs
@@ -2554,7 +2554,6 @@ inssbjsonser
 sbservice
 sbactive
 #curl -sL https://gitlab.com/rwkgyg/sing-box-yg/-/raw/main/version/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
-curl -sL https://raw.githubusercontent.com/yonggekkk/sing-box-yg/main/version | awk -F "更新内容" '{print $1}' | head -n 1 > /etc/s-box/v
 red "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 lnsb && blue "Sing-box脚本安装成功，脚本快捷方式：sb" && cronsb
 echo
@@ -2846,7 +2845,7 @@ green "1：更换Tuic5主端口 (原多端口自动重置删除)"
 green "2：添加Tuic5多端口"
 green "3：重置删除Tuic5多端口"
 green "0：返回上层"
-readp "请选择【0-4】：" menu
+readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
 if [ -n "$tu5_ports" ]; then
 tu5deports
@@ -3193,7 +3192,7 @@ blue "cloudflare-ech.com"
 blue "www.visa.com.sg"
 blue "www.wto.org"
 blue "www.shopify.com"
-blue "yg1.ygkkk.dpdns.org (yg1中的1，可换为1-13中任意数字)"
+blue "cdn1.cloudflare.170618.xyz (yg1中的1，可换为1-13中任意数字)"
 echo
 yellow "恢复默认操作：选项1设置为VPS的IP或者解析的域名，选项2设置为www.bing.com或者解析的域名"
 echo
@@ -3201,7 +3200,7 @@ yellow "1：自定义Vmess-ws(tls)主协议节点的CDN优选地址"
 yellow "2：针对选项1，重置客户端host/sni域名(IP解析到CF上的域名)"
 yellow "3：自定义Vmess-ws(tls)-Argo节点的CDN优选地址"
 yellow "0：返回上层"
-readp "请选择【0-4】：" menu
+readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
 echo
 green "请确保VPS的IP已解析到Cloudflare的域名上"
@@ -3898,7 +3897,7 @@ green "2：升级/切换Sing-box最新测试版 v$precore  ${bblue}${pre}${plain
 green "3：切换Sing-box某个正式版或测试版，需指定版本号 (建议1.10.0以上版本)"
 green "4：更新 晓林技术服务 管理脚本 (从 xiaolin1991 官方源)"
 green "0：返回上层"
-readp "请选择【0-4】：" menu
+readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
 upcore=$(curl -Ls https://github.com/SagerNet/sing-box/releases/latest | grep -oP 'tag/v\K[0-9.]+' | head -n 1)
 elif [ "$menu" = "2" ]; then
@@ -4020,7 +4019,7 @@ yellow "1：刷新并查看各协议分享链接、二维码、聚合节点"
 yellow "2：刷新并查看Mihomo、Sing-box客户端SFA/SFI/SFW三合一配置、Gitlab私有订阅链接"
 yellow "3：推送最新节点配置信息(选项1+选项2)到Telegram通知"
 yellow "0：返回上层"
-readp "请选择【0-4】：" menu
+readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
 sbshare
 elif  [ "$menu" = "2" ]; then
@@ -4055,11 +4054,11 @@ fi
 
 acme(){
 #bash <(curl -Ls https://gitlab.com/rwkgyg/acme-script/raw/main/acme.sh)
-bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/acme-yg/main/acme.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/acme.sh 2>/dev/null || curl -Ls https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/acme.sh)
 }
 cfwarp(){
 #bash <(curl -Ls https://gitlab.com/rwkgyg/CFwarp/raw/main/CFwarp.sh)
-bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/warp-yg/main/CFwarp.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/warp.sh 2>/dev/null || curl -Ls https://ghfast.top/https://raw.githubusercontent.com/xiaolin1991/vps-tools/main/warp.sh)
 }
 bbr(){
 if [[ $vi =~ lxc|openvz ]]; then
@@ -4257,7 +4256,7 @@ yellow "1：重置启用WARP-plus-Socks5本地Warp代理模式"
 yellow "2：重置启用WARP-plus-Socks5多地区Psiphon代理模式"
 yellow "3：停止WARP-plus-Socks5代理模式"
 yellow "0：返回上层"
-readp "请选择【0-4】：" menu
+readp "请选择【0-3】：" menu
 if [ "$menu" = "1" ]; then
 ins
 nohup /etc/s-box/sbwpph -b 127.0.0.1:$port -$sw46 --endpoint 162.159.192.1:2408 >/dev/null 2>&1 &
@@ -4334,6 +4333,7 @@ blue "为您提供专业、稳定、高效的网络解决方案"
 echo
 }
 
+# XIAOLIN TECHNICAL SERVICE
 clear
 white "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
 echo -e "${bblue} ░██   ░██ ░██  ░█████  ░██████  ${red}░██       ░██ ░███   ░██ ${plain}"

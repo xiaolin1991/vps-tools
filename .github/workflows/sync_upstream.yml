@@ -18,17 +18,22 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: 执行自动化上游抓取与晓林品牌定制
+      - name: 安装 Node.js 环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 执行自动化上游抓取与晓林品牌定制 (sb.sh / acme.sh / warp.sh)
         run: |
-          python3 scripts/brand_sb.py
+          node scripts/brand_all.js
 
       - name: 检查并提交更新
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          if [[ -n $(git status -s sb.sh) ]]; then
-            git add sb.sh
-            git commit -m "chore(sync): 自动同步上游最新代码并注入晓林专属品牌标识"
+          if [[ -n $(git status -s) ]]; then
+            git add sb.sh acme.sh warp.sh
+            git commit -m "chore(sync): 自动同步上游最新代码并注入晓林专属品牌标识 (sb/acme/warp)"
             git push origin main
             echo "🎉 已成功同步上游并推送到仓库！"
           else
