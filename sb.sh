@@ -11,7 +11,7 @@ green(){ echo -e "\033[32m\033[01m$1\033[0m";}
 yellow(){ echo -e "\033[33m\033[01m$1\033[0m";}
 blue(){ echo -e "\033[36m\033[01m$1\033[0m";}
 white(){ echo -e "\033[37m\033[01m$1\033[0m";}
-readp(){ read -p "$(yellow "$1")" $2;}
+readp(){ read -e -p "$(yellow "$1")" $2;}
 [[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit
 
 # 晓林技术服务专属：命令行一键更新支持 (sb update 或 sb -u)
@@ -28,7 +28,7 @@ elif [[ -f "$0" && "$(readlink -f "$0")" != "/usr/bin/sb" ]]; then
     cp -f "$0" /usr/bin/sb 2>/dev/null
     chmod +x /usr/bin/sb 2>/dev/null
 fi
-stty erase $'\b' 2>/dev/null || stty erase '^H' 2>/dev/null
+stty erase '^?' 2>/dev/null || stty erase '^H' 2>/dev/null
 #[[ -e /etc/hosts ]] && grep -qE '^ *172.65.251.78 gitlab.com' /etc/hosts || echo -e '\n172.65.251.78 gitlab.com' >> /etc/hosts
 if [[ -f /etc/redhat-release ]]; then
 release="Centos"

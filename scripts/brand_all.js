@@ -73,7 +73,15 @@ async function fetchFromMirrors(upstreamPath) {
 function transformSb(content) {
   content = content.replace(/\r\n/g, '\n');
 
-  // 顶部插入命令行更新支持与快捷方式自动部署
+  // 修复退格键与删除键 (避免按退格输出 ^?，按Delete输出 2~ 5~)
+  content = content.replace(
+    'readp(){ read -p "$(yellow "$1")" $2;}',
+    'readp(){ read -e -p "$(yellow "$1")" $2;}'
+  );
+  content = content.replace(
+    /stty erase \$'\\b' 2>\/dev\/null \|\| stty erase '\^H' 2>\/dev\/null/g,
+    "stty erase '^?' 2>/dev/null || stty erase '^H' 2>/dev/null"
+  );
   const rootCheck = '[[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit';
   const autoDeploy = `${rootCheck}
 
@@ -270,6 +278,16 @@ esac`;
 function transformAcme(content) {
   content = content.replace(/\r\n/g, '\n');
 
+  // 修复退格键与删除键 (避免按退格输出 ^?，按Delete输出 2~ 5~)
+  content = content.replace(
+    'readp(){ read -p "$(yellow "$1")" $2;}',
+    'readp(){ read -e -p "$(yellow "$1")" $2;}'
+  );
+  content = content.replace(
+    '[[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit',
+    '[[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit\nstty erase \'^?\' 2>/dev/null || stty erase \'^H\' 2>/dev/null'
+  );
+
   // 替换 Banner 与作者信息
   const acmeHeader = `${XIAOLIN_HEADER}
 green "晓林技术服务 Acme 域名证书管理工具"`;
@@ -298,6 +316,16 @@ green "晓林技术服务 Acme 域名证书管理工具"`;
 /* ========================================================================== */
 function transformWarp(content) {
   content = content.replace(/\r\n/g, '\n');
+
+  // 修复退格键与删除键 (避免按退格输出 ^?，按Delete输出 2~ 5~)
+  content = content.replace(
+    'readp(){ read -p "$(yellow "$1")" $2;}',
+    'readp(){ read -e -p "$(yellow "$1")" $2;}'
+  );
+  content = content.replace(
+    '[[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit',
+    '[[ $EUID -ne 0 ]] && yellow "请以root模式运行脚本" && exit\nstty erase \'^?\' 2>/dev/null || stty erase \'^H\' 2>/dev/null'
+  );
 
   // 替换所有 Banner 块 (CFwarp 里有 3 处 Banner)
   const warpHeader = `${XIAOLIN_HEADER}
